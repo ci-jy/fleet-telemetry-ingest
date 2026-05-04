@@ -1,0 +1,49 @@
+{
+  "name": "fleet-telemetry-ingest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MQTT vehicle telemetry ingestion service with a replayable trip state machine, idempotent Postgres storage, REST API and React view",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && vite build --config web/vite.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "start": "node dist/src/main.js",
+    "dev": "tsx src/main.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "sim": "tsx scripts/simulate.ts",
+    "load:mqtt": "tsx scripts/mqtt-load.ts",
+    "load:api": "k6 run load/k6-api.js",
+    "infra:up": "docker compose up -d",
+    "infra:down": "docker compose down"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@fastify/static": "^10.1.5",
+    "fastify": "^5.12.5",
+    "mqtt": "^5.16.0",
+    "pg": "^8.23.1",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "aedes": "^1.2.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
