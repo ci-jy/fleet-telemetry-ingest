@@ -102,6 +102,23 @@ describe("trip state machine transitions", () => {
     expect(r.state.trip!.distanceM).toBeCloseTo(haversineM(anchor, first), 6);
   });
 
+  it("measures a trip from the parking position even if departure was not observed", () => {
+    const t = new Track();
+    t.add("off");
+    const parkedAt = t.points[0]!;
+    t.add("stationary");
+    // The vehicle drives off but every moving message is lost; it is next seen stopped elsewhere.
+    t.many("moving", 6);
+    const unseen = t.points.splice(2, 6);
+    expect(unseen).toHaveLength(6);
+    t.add("stationary");
+    const firstSeen = t.add("moving");
+    const r = run(t.points);
+    expect(r.state.trip!.startLat).toBe(parkedAt.lat);
+    expect(r.state.trip!.startLon).toBe(parkedAt.lon);
+    expect(r.state.trip!.distanceM).toBeCloseTo(haversineM(parkedAt, firstSeen), 6);
+  });
+
   it("moving -> moving accumulates haversine distance", () => {
     const t = new Track();
     t.add("off");

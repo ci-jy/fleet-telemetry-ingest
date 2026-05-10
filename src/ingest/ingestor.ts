@@ -123,11 +123,9 @@ export class Ingestor {
     const input = await loadReplayInput(db, deviceId);
     let state: DeviceTripState = initialTripState();
     if (input.lastTrip) {
-      state = {
-        state: "trip_ended",
-        last: input.lastTrip.endReason === "gap" ? null : input.lastTrip.endPoint,
-        trip: null,
-      };
+      // Same state the live state machine is in right after closing that trip.
+      const end = input.lastTrip.endReason === "gap" ? null : input.lastTrip.endPoint;
+      state = { state: "trip_ended", last: end, trip: null, anchor: end };
     }
     const closed: ClosedTrip[] = [];
     for (const p of input.points) {

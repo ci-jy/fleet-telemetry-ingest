@@ -76,6 +76,11 @@ export interface DeviceTripState {
   state: TripState;
   last: Point | null;
   trip: OpenTrip | null;
+  /**
+   * Where the vehicle is parked: the last ignition-off point (or trip end) while not on a trip.
+   * The next trip is measured from here, so a dropout right at departure does not lose distance.
+   */
+  anchor: Point | null;
 }
 
 export interface Transition {
@@ -97,7 +102,7 @@ export interface StepResult {
   events: TripEvent[];
 }
 
-export const initialTripState = (): DeviceTripState => ({ state: "parked", last: null, trip: null });
+export const initialTripState = (): DeviceTripState => ({ state: "parked", last: null, trip: null, anchor: null });
 
 export function classify(p: Point, cfg: TripConfig): Exclude<TripInput, "gap"> {
   if (!p.ignition) return "off";
@@ -109,9 +114,9 @@ export function classify(p: Point, cfg: TripConfig): Exclude<TripInput, "gap"> {
  * transition it takes is in this table, and the unit tests exercise each row.
  */
 export const TRANSITIONS: ReadonlyArray<{ from: TripState; input: TripInput; to: TripState; effect: string }> = [
-  { from: "parked", input: "off", to: "parked", effect: "none" },
+  { from: "parked", input: "off", to: "parked", effect: "remember parking position (anchor)" },
   { from: "parked", input: "stationary", to: "parked", effect: "none (engine on, not moving)" },
-  { from: "parked", input: "moving", to: "moving", effect: "start trip (anchored at last known position)" },
+  { from: "parked", input: "moving", to: "moving", effect: "start trip, measured from the parking position" },
   { from: "parked", input: "gap", to: "parked", effect: "none" },
   { from: "moving", input: "moving", to: "moving", effect: "accumulate distance" },
   { from: "moving", input: "stationary", to: "idle", effect: "start idle period" },
@@ -122,8 +127,8 @@ export const TRANSITIONS: ReadonlyArray<{ from: TripState; input: TripInput; to:
   { from: "idle", input: "off", to: "trip_ended", effect: "close idle period, end trip (ignition_off)" },
   { from: "idle", input: "gap", to: "trip_ended", effect: "end trip at last point (gap), then re-evaluate message" },
   { from: "trip_ended", input: "moving", to: "moving", effect: "start new trip" },
-  { from: "trip_ended", input: "stationary", to: "parked", effect: "none" },
-  { from: "trip_ended", input: "off", to: "parked", effect: "none" },
+  { from: "trip_ended", input: "stationary", to: "parked", effect: "none (trip end stays the parking position)" },
+  { from: "trip_ended", input: "off", to: "parked", effect: "remember parking position" },
   { from: "trip_ended", input: "gap", to: "trip_ended", effect: "none" },
 ];
 
@@ -182,6 +187,7 @@ export function step(prev: DeviceTripState, p: Point, cfg: TripConfig = DEFAULT_
   const events: TripEvent[] = [];
   let state = prev.state;
   let last = prev.last;
+  let anchor = prev.anchor;
   let trip: OpenTrip | null = prev.trip ? { ...prev.trip, idleSegments: [...prev.trip.idleSegments] } : null;
 
   const go = (input: TripInput, to: TripState): void => {
@@ -200,6 +206,7 @@ export function step(prev: DeviceTripState, p: Point, cfg: TripConfig = DEFAULT_
       go("gap", "trip_ended");
       // Do not anchor the next trip across the silence.
       last = null;
+      anchor = null;
     } else {
       go("gap", state);
     }
@@ -213,10 +220,12 @@ export function step(prev: DeviceTripState, p: Point, cfg: TripConfig = DEFAULT_
     case "parked":
     case "trip_ended": {
       if (input === "moving") {
-        trip = openTrip(p, last);
+        trip = openTrip(p, anchor ?? last);
+        anchor = null;
         events.push({ type: "trip_started", seq: p.seq, ts: p.ts });
         go(input, "moving");
       } else {
+        if (input === "off" || anchor === null) anchor = p;
         go(input, "parked");
       }
       break;
@@ -235,6 +244,7 @@ export function step(prev: DeviceTripState, p: Point, cfg: TripConfig = DEFAULT_
       } else {
         events.push({ type: "trip_ended", trip: closeTrip(trip, p, trip.distanceM, "ignition_off") });
         trip = null;
+        anchor = p;
         go(input, "trip_ended");
       }
       break;
@@ -249,6 +259,7 @@ export function step(prev: DeviceTripState, p: Point, cfg: TripConfig = DEFAULT_
           trip: closeTrip({ ...trip, idleStart: null }, idleStart, idleStart.distanceM, "idle_timeout"),
         });
         trip = null;
+        anchor = { ...p, seq: idleStart.seq, ts: idleStart.ts, lat: idleStart.lat, lon: idleStart.lon };
         go(input, "trip_ended");
         break;
       }
@@ -274,13 +285,14 @@ export function step(prev: DeviceTripState, p: Point, cfg: TripConfig = DEFAULT_
       } else {
         events.push({ type: "trip_ended", trip: closeTrip(trip, p, trip.distanceM, "ignition_off") });
         trip = null;
+        anchor = p;
         go(input, "trip_ended");
       }
       break;
     }
   }
 
-  return { state: { state, last: p, trip }, transitions, events };
+  return { state: { state, last: p, trip, anchor }, transitions, events };
 }
 
 /** Runs a full ordered sequence of points through the state machine (used for replay and tests). */
