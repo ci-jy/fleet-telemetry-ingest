@@ -1,0 +1,25 @@
+:root {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: #1f2937;
+  background: #f8fafc;
+}
+main { max-width: 1280px; margin: 0 auto; padding: 1rem 1.5rem; }
+header { display: flex; align-items: baseline; gap: 1rem; }
+h1 { font-size: 1.4rem; margin: 0.5rem 0; }
+h2 { font-size: 1.05rem; margin: 0.75rem 0 0.5rem; }
+.layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 1.5rem; }
+table { width: 100%; border-collapse: collapse; background: white; font-size: 0.9rem; }
+th, td { padding: 0.35rem 0.5rem; border-bottom: 1px solid #e5e7eb; text-align: left; }
+th { background: #f1f5f9; font-weight: 600; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: #f1f5f9; }
+tr.selected { background: #dbeafe !important; }
+.badge { padding: 0.1rem 0.45rem; border-radius: 999px; font-size: 0.8rem; background: #e5e7eb; }
+.badge.moving { background: #dcfce7; color: #166534; }
+.badge.idle { background: #fef3c7; color: #92400e; }
+.badge.trip_ended { background: #e0e7ff; color: #3730a3; }
+.muted { color: #6b7280; font-size: 0.85rem; }
+.error { color: #b91c1c; }
+.track { width: 100%; max-height: 420px; background: white; border: 1px solid #e5e7eb; margin-top: 0.75rem; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
