@@ -1,27 +1,30 @@
+# Local infrastructure for the ingestion service.
+# Host networking keeps setup simple on Linux; both services bind to 127.0.0.1 only,
+# on ports 21883 (MQTT) and 25432 (Postgres).
 services:
   mosquitto:
     image: eclipse-mosquitto:2
-    ports:
-      - "21883:1883"
+    network_mode: host
     volumes:
       - ./infra/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
     restart: unless-stopped
 
   postgres:
     image: postgres:16-alpine
+    network_mode: host
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=25432"]
     environment:
       POSTGRES_USER: fleet
       POSTGRES_PASSWORD: fleet
       POSTGRES_DB: fleet
-    ports:
-      - "25432:5432"
+      PGPORT: "25432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fleet -d fleet"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 25432 -U fleet -d fleet"]
       interval: 2s
       timeout: 3s
-      retries: 20
+      retries: 30
     restart: unless-stopped
 
 volumes:
