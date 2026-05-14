@@ -1,0 +1,40 @@
+{
+  "measuredAt": "2026-10-03T01:17:02.157Z",
+  "config": {
+    "seeds": 20,
+    "devices": 50,
+    "tripsPerDevice": 4,
+    "faults": {
+      "seed": 7,
+      "dropRate": 0.02,
+      "outageRate": 0.002,
+      "outageMs": [
+        30000,
+        120000
+      ],
+      "duplicateRate": 0.05,
+      "reorderRate": 0.1,
+      "maxReorderDelayMs": 20000,
+      "lateRate": 0.002,
+      "lateDelayMs": 90000
+    }
+  },
+  "trips": {
+    "expected": 4000,
+    "actual": 4000,
+    "devicesWithCountMismatch": 0
+  },
+  "distanceErrorPct": {
+    "medianAbs": 0.01,
+    "p95Abs": 0.35,
+    "p99Abs": 0.87,
+    "maxAbs": 2.14,
+    "meanSigned": -0.07,
+    "tripsWithin1Pct": 3968,
+    "tripsCompared": 4000,
+    "fleetTotal": -0.07
+  },
+  "idleErrorPct": {
+    "fleetTotal": 0.97
+  }
+}

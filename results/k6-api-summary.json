@@ -1,0 +1,17 @@
+{
+  "measuredAt": "2026-10-03T01:14:26.690Z",
+  "baseUrl": "http://127.0.0.1:23000",
+  "offeredRate": 200,
+  "duration": "10s",
+  "requests": 2003,
+  "throughputRps": 199.2205767359151,
+  "failedRate": 0,
+  "latencyMs": {
+    "avg": 7.507847559161263,
+    "med": 1.682344,
+    "p90": 25.050573999999997,
+    "p95": 30.3967924,
+    "max": 83.068784
+  },
+  "thresholdsPassed": true
+}

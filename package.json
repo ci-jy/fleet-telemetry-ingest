@@ -18,6 +18,7 @@
     "sim": "tsx scripts/simulate.ts",
     "load:mqtt": "tsx scripts/mqtt-load.ts",
     "load:api": "k6 run load/k6-api.js",
+    "accuracy": "tsx scripts/accuracy.ts",
     "infra:up": "docker compose up -d",
     "infra:down": "docker compose down"
   },
