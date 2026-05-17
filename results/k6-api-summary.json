@@ -1,17 +1,17 @@
 {
-  "measuredAt": "2026-10-03T01:14:26.690Z",
+  "measuredAt": "2026-10-03T01:21:39.333Z",
   "baseUrl": "http://127.0.0.1:23000",
   "offeredRate": 200,
-  "duration": "10s",
-  "requests": 2003,
-  "throughputRps": 199.2205767359151,
+  "duration": "60s",
+  "requests": 12003,
+  "throughputRps": 199.78054062506507,
   "failedRate": 0,
   "latencyMs": {
-    "avg": 7.507847559161263,
-    "med": 1.682344,
-    "p90": 25.050573999999997,
-    "p95": 30.3967924,
-    "max": 83.068784
+    "avg": 14.197682010330736,
+    "med": 3.864128,
+    "p90": 41.57764200000001,
+    "p95": 52.843511,
+    "max": 164.015236
   },
   "thresholdsPassed": true
 }

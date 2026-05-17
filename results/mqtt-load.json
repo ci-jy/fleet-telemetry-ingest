@@ -1,0 +1,120 @@
+{
+  "measuredAt": "2026-10-03T01:20:34.520Z",
+  "host": {
+    "cpus": 4,
+    "cpuModel": "13th Gen Intel(R) Core(TM) i5-13600K",
+    "memoryGb": 8,
+    "node": "v26.9.0"
+  },
+  "config": {
+    "url": "mqtt://127.0.0.1:21883",
+    "devices": 1000,
+    "durationS": 30,
+    "connections": 4,
+    "qos": 1
+  },
+  "results": [
+    {
+      "offeredRate": 1000,
+      "durationS": 30,
+      "devices": 1000,
+      "published": 30000,
+      "stored": 30000,
+      "lost": 0,
+      "publishRate": 998.5,
+      "storedThroughput": 999.7,
+      "latencyMs": {
+        "p50": 11.6,
+        "p95": 19.9,
+        "p99": 23.3,
+        "max": 84.2,
+        "mean": 11.8
+      }
+    },
+    {
+      "offeredRate": 5000,
+      "durationS": 30,
+      "devices": 1000,
+      "published": 150000,
+      "stored": 150000,
+      "lost": 0,
+      "publishRate": 4992,
+      "storedThroughput": 4992.1,
+      "latencyMs": {
+        "p50": 19.9,
+        "p95": 35.1,
+        "p99": 63.1,
+        "max": 128.7,
+        "mean": 21
+      }
+    },
+    {
+      "offeredRate": 10000,
+      "durationS": 30,
+      "devices": 1000,
+      "published": 300000,
+      "stored": 300000,
+      "lost": 0,
+      "publishRate": 9983.7,
+      "storedThroughput": 9994.5,
+      "latencyMs": {
+        "p50": 23.4,
+        "p95": 44.4,
+        "p99": 90.4,
+        "max": 119.4,
+        "mean": 25.5
+      }
+    },
+    {
+      "offeredRate": 15000,
+      "durationS": 30,
+      "devices": 1000,
+      "published": 450000,
+      "stored": 450000,
+      "lost": 0,
+      "publishRate": 14980.5,
+      "storedThroughput": 14988.5,
+      "latencyMs": {
+        "p50": 26.3,
+        "p95": 74.6,
+        "p99": 101.5,
+        "max": 138.6,
+        "mean": 30.5
+      }
+    },
+    {
+      "offeredRate": 20000,
+      "durationS": 30,
+      "devices": 1000,
+      "published": 600000,
+      "stored": 600000,
+      "lost": 0,
+      "publishRate": 19952.1,
+      "storedThroughput": 19978.2,
+      "latencyMs": {
+        "p50": 57.3,
+        "p95": 212.8,
+        "p99": 261.2,
+        "max": 299.5,
+        "mean": 83
+      }
+    },
+    {
+      "offeredRate": 25000,
+      "durationS": 30,
+      "devices": 1000,
+      "published": 750000,
+      "stored": 750000,
+      "lost": 0,
+      "publishRate": 24939.3,
+      "storedThroughput": 22050.3,
+      "latencyMs": {
+        "p50": 1881.6,
+        "p95": 3747.9,
+        "p99": 3926.3,
+        "max": 4023,
+        "mean": 1880.4
+      }
+    }
+  ]
+}
