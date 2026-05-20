@@ -99,7 +99,7 @@ export async function insertTrip(tx: Queryable, deviceId: string, trip: ClosedTr
 /** Upserts the current state of many devices in one statement. */
 export async function upsertDevices(
   tx: Queryable,
-  devices: readonly { deviceId: string; state: DeviceTripState }[],
+  devices: readonly { deviceId: string; state: DeviceTripState; nextSeq?: number | null }[],
 ): Promise<void> {
   if (devices.length === 0) return;
   const ids: string[] = [];
@@ -111,8 +111,10 @@ export async function upsertDevices(
   const speeds: (number | null)[] = [];
   const igns: (boolean | null)[] = [];
   const trips: (string | null)[] = [];
-  for (const { deviceId, state } of devices) {
+  const cursors: (number | null)[] = [];
+  for (const { deviceId, state, nextSeq } of devices) {
     ids.push(deviceId);
+    cursors.push(nextSeq ?? null);
     states.push(state.state);
     const l = state.last;
     seqs.push(l?.seq ?? null);
@@ -135,10 +137,12 @@ export async function upsertDevices(
     );
   }
   await tx.query(
-    `INSERT INTO devices (device_id, state, last_seq, last_ts, last_lat, last_lon, last_speed_kph, last_ignition, open_trip, updated_at)
-     SELECT d, st, sq, CASE WHEN t IS NULL THEN NULL ELSE to_timestamp(t / 1000.0) END, la, lo, sp, ig, ot::jsonb, now()
-     FROM unnest($1::text[], $2::text[], $3::bigint[], $4::float8[], $5::float8[], $6::float8[], $7::real[], $8::boolean[], $9::text[])
-       AS u(d, st, sq, t, la, lo, sp, ig, ot)
+    `INSERT INTO devices (device_id, state, last_seq, last_ts, last_lat, last_lon, last_speed_kph, last_ignition, open_trip,
+                          reorder_next_seq, updated_at)
+     SELECT d, st, sq, CASE WHEN t IS NULL THEN NULL ELSE to_timestamp(t / 1000.0) END, la, lo, sp, ig, ot::jsonb, nx, now()
+     FROM unnest($1::text[], $2::text[], $3::bigint[], $4::float8[], $5::float8[], $6::float8[], $7::real[], $8::boolean[], $9::text[],
+                 $10::bigint[])
+       AS u(d, st, sq, t, la, lo, sp, ig, ot, nx)
      ON CONFLICT (device_id) DO UPDATE SET
        state = EXCLUDED.state,
        last_seq = COALESCE(EXCLUDED.last_seq, devices.last_seq),
@@ -148,8 +152,9 @@ export async function upsertDevices(
        last_speed_kph = COALESCE(EXCLUDED.last_speed_kph, devices.last_speed_kph),
        last_ignition = COALESCE(EXCLUDED.last_ignition, devices.last_ignition),
        open_trip = EXCLUDED.open_trip,
+       reorder_next_seq = COALESCE(EXCLUDED.reorder_next_seq, devices.reorder_next_seq),
        updated_at = now()`,
-    [ids, states, seqs, tss, lats, lons, speeds, igns, trips],
+    [ids, states, seqs, tss, lats, lons, speeds, igns, trips, cursors],
   );
 }
 
@@ -174,10 +179,17 @@ export const rowToPoint = (r: PointRow): Point => ({
 export interface ReplayInput {
   /** End of the last persisted trip, if any. */
   lastTrip: { endSeq: number; endReason: string; endPoint: Point | null } | null;
-  /** Points applied after that trip, in sequence order, excluding late arrivals. */
+  /** Stored points after that trip, in sequence order, excluding late arrivals. */
   points: Point[];
   /** Highest sequence number stored for the device (including late ones). */
   maxSeq: number | null;
+  /**
+   * Persisted reorder cursor: points below it were applied, points at or above it were still
+   * buffered. `undefined` when the device row predates the cursor column (or does not exist).
+   */
+  nextSeq: number | null | undefined;
+  /** Newest event time among the device's non-late points (the reorder buffer's high-water mark). */
+  maxTs: number;
 }
 
 /** Loads everything needed to rebuild one device's in-memory state by replaying its stored points. */
@@ -204,9 +216,29 @@ export async function loadReplayInput(db: Queryable, deviceId: string): Promise<
      WHERE device_id = $1 AND NOT late AND seq > $2 ORDER BY seq`,
     [deviceId, lastTrip?.endSeq ?? -1],
   );
-  const max = await db.query<{ m: number | null }>(`SELECT max(seq) AS m FROM points WHERE device_id = $1`, [
-    deviceId,
-  ]);
+  const max = await db.query<{ m: number | null; mts: Date | null }>(
+    `SELECT max(seq) AS m, max(ts) FILTER (WHERE NOT late) AS mts FROM points WHERE device_id = $1`,
+    [deviceId],
+  );
   const m = max.rows[0]?.m;
-  return { lastTrip, points: pts.rows.map(rowToPoint), maxSeq: m === null || m === undefined ? null : Number(m) };
+  const mts = max.rows[0]?.mts;
+  const dev = await db.query<{ last_seq: number | null; reorder_next_seq: number | null }>(
+    `SELECT last_seq, reorder_next_seq FROM devices WHERE device_id = $1`,
+    [deviceId],
+  );
+  const d = dev.rows[0];
+  // A device that has applied points but no stored cursor was written before the cursor existed.
+  const nextSeq =
+    d === undefined || (d.reorder_next_seq === null && d.last_seq !== null)
+      ? undefined
+      : d.reorder_next_seq === null
+        ? null
+        : Number(d.reorder_next_seq);
+  return {
+    lastTrip,
+    points: pts.rows.map(rowToPoint),
+    maxSeq: m === null || m === undefined ? null : Number(m),
+    nextSeq,
+    maxTs: mts ? new Date(mts).getTime() : 0,
+  };
 }

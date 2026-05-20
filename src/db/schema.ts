@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS idle_segments (
   UNIQUE (device_id, start_seq)
 );
 CREATE INDEX IF NOT EXISTS idle_segments_trip_idx ON idle_segments (trip_id);
+
+-- Next sequence number the device's reorder buffer waits for. Stored points at or above it that
+-- are not late were still buffered, so a restart can rebuild the buffer exactly.
+ALTER TABLE devices ADD COLUMN IF NOT EXISTS reorder_next_seq bigint;
 `;
 
 export async function migrate(db: Db): Promise<void> {

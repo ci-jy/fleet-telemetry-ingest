@@ -11,6 +11,16 @@ export interface AppConfig {
   batchMaxSize: number;
   batchMaxDelayMs: number;
   staleFlushMs: number;
+  /** Bound on queued messages; the MQTT consumer pauses when it is reached. */
+  queueMax: number;
+  retryDelayMs: number;
+  retryMaxDelayMs: number;
+  dbConnectTimeoutMs: number;
+  dbQueryTimeoutMs: number;
+  mqttClientId: string;
+  mqttReconnectMinMs: number;
+  mqttReconnectMaxMs: number;
+  shutdownTimeoutMs: number;
   webDist: string | null;
 }
 
@@ -39,6 +49,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     batchMaxSize: num(env, "BATCH_MAX_SIZE", 1000),
     batchMaxDelayMs: num(env, "BATCH_MAX_DELAY_MS", 20),
     staleFlushMs: num(env, "STALE_FLUSH_MS", 15_000),
+    queueMax: num(env, "INGEST_QUEUE_MAX", 10_000),
+    retryDelayMs: num(env, "RETRY_DELAY_MS", 500),
+    retryMaxDelayMs: num(env, "RETRY_MAX_DELAY_MS", 5_000),
+    dbConnectTimeoutMs: num(env, "DB_CONNECT_TIMEOUT_MS", 5_000),
+    dbQueryTimeoutMs: num(env, "DB_QUERY_TIMEOUT_MS", 15_000),
+    mqttClientId: env.MQTT_CLIENT_ID ?? "fleet-ingest",
+    mqttReconnectMinMs: num(env, "MQTT_RECONNECT_MIN_MS", 250),
+    mqttReconnectMaxMs: num(env, "MQTT_RECONNECT_MAX_MS", 5_000),
+    shutdownTimeoutMs: num(env, "SHUTDOWN_TIMEOUT_MS", 10_000),
     webDist: env.WEB_DIST === "" ? null : (env.WEB_DIST ?? "web/dist"),
   };
 }

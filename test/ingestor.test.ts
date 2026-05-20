@@ -160,13 +160,9 @@ describe("Ingestor", () => {
     await reference.close();
     expect(openBefore).toBeGreaterThan(0); // the crash really happened mid-trip
     expect(restarted.length).toBe(fleet.trips.length);
-    // Same trip boundaries. Distances can differ marginally: stragglers that were still buffered
-    // at the crash are applied by the replay, so a few reordered messages after the restart are
-    // classified late instead of being slotted in.
-    expect(restarted.map(({ distance_m: _, ...k }) => k)).toEqual(uninterrupted.map(({ distance_m: _, ...k }) => k));
-    restarted.forEach((r, i) => {
-      expect(Math.abs(r.distance_m - uninterrupted[i]!.distance_m) / uninterrupted[i]!.distance_m).toBeLessThan(0.001);
-    });
+    // The reorder buffers are rebuilt from the stored points and the persisted cursor, so the
+    // restarted run is identical to the uninterrupted one, distances included.
+    expect(restarted).toEqual(uninterrupted);
   });
 
   it("releases the reorder buffer of a quiet device on the stale sweep", async () => {

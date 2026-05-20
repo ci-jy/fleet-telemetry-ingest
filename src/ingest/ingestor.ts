@@ -28,8 +28,15 @@ export interface IngestorOptions {
   batchMaxDelayMs: number;
   /** Release a device's reorder buffer if no message arrived for it for this long (wall clock). */
   staleFlushMs: number;
-  /** Retry delay after a failed batch. */
+  /** Retry delay after a failed batch; doubles on each consecutive failure... */
   retryDelayMs: number;
+  /** ...up to this cap. */
+  retryMaxDelayMs: number;
+  /**
+   * Bound on messages held in memory waiting for a batch. At this depth the ingestor reports
+   * itself saturated and the MQTT consumer stops reading until the queue is half empty.
+   */
+  maxPending: number;
   now: () => number;
   log: (level: "info" | "warn" | "error", msg: string, extra?: Record<string, unknown>) => void;
 }
@@ -41,6 +48,8 @@ export const DEFAULT_INGESTOR_OPTIONS: IngestorOptions = {
   batchMaxDelayMs: 20,
   staleFlushMs: 15_000,
   retryDelayMs: 500,
+  retryMaxDelayMs: 5_000,
+  maxPending: 10_000,
   now: () => Date.now(),
   log: () => undefined,
 };
@@ -56,9 +65,26 @@ export interface IngestStats {
   batches: number;
   batchErrors: number;
   pending: number;
+  /** Capacity of the in-memory queue (`maxPending`). */
+  queueCapacity: number;
+  /** Highest queue depth since start. */
+  queuePeak: number;
+  /** True while the consumer is paused because the queue is full. */
+  paused: boolean;
+  /** Number of times consumption was paused. */
+  pauses: number;
+  /** Failed batches in a row (0 when the database is healthy). */
+  consecutiveFailures: number;
+  /** Devices whose in-memory state was rebuilt from the database after a failed batch. */
+  reloads: number;
   devices: number;
   lastBatchMs: number;
   lastError: string | null;
+}
+
+/** A queued message plus the callback that acknowledges it to the broker once it is committed. */
+interface PendingPoint extends IncomingPoint {
+  ack?: () => void;
 }
 
 interface DeviceRuntime {
@@ -75,12 +101,25 @@ interface DeviceRuntime {
  * trip state machine, and the resulting trips, idle segments and device states are written. The
  * in-memory device state is computed on copies and only swapped in after COMMIT, so a failed
  * transaction leaves memory and database consistent and the batch can simply be retried.
+ *
+ * A failure whose outcome is unknown (for example the connection dropped while COMMIT was in
+ * flight) may still have committed. The devices of a failed batch are therefore rebuilt from the
+ * database before the retry; the retry then sees its own rows as duplicates and changes nothing.
+ *
+ * Messages carry an optional `ack` callback that runs only after their batch has committed, so
+ * the broker keeps (and redelivers) anything that was not yet durable when the process died.
  */
 export class Ingestor {
   private readonly opts: IngestorOptions;
   private readonly devices = new Map<string, DeviceRuntime>();
-  private pending: IncomingPoint[] = [];
+  private pending: PendingPoint[] = [];
   private forceFlush = new Set<string>();
+  /** Devices whose in-memory state may be stale after a failed batch. */
+  private dirty = new Set<string>();
+  private readyWaiters: (() => void)[] = [];
+  private sourceConnected = true;
+  /** Wall-clock time since which the pipeline has been healthy (consumer connected, database up). */
+  private healthySince = 0;
   private timer: NodeJS.Timeout | null = null;
   private staleTimer: NodeJS.Timeout | null = null;
   private chain: Promise<void> = Promise.resolve();
@@ -97,6 +136,12 @@ export class Ingestor {
     batches: 0,
     batchErrors: 0,
     pending: 0,
+    queueCapacity: 0,
+    queuePeak: 0,
+    paused: false,
+    pauses: 0,
+    consecutiveFailures: 0,
+    reloads: 0,
     devices: 0,
     lastBatchMs: 0,
     lastError: null,
@@ -107,6 +152,8 @@ export class Ingestor {
     options: Partial<IngestorOptions> = {},
   ) {
     this.opts = { ...DEFAULT_INGESTOR_OPTIONS, ...options };
+    this.stats.queueCapacity = this.opts.maxPending;
+    this.healthySince = this.opts.now();
   }
 
   /** Rebuilds every known device's state by replaying its stored points since its last persisted trip. */
@@ -119,6 +166,10 @@ export class Ingestor {
     return rows.length;
   }
 
+  /**
+   * Rebuilds one device from the database: trip state from its last persisted trip plus the
+   * points the reorder buffer had released, and the buffer itself from the points it still held.
+   */
   private async recoverDevice(db: Queryable, deviceId: string): Promise<void> {
     const input = await loadReplayInput(db, deviceId);
     let state: DeviceTripState = initialTripState();
@@ -127,8 +178,11 @@ export class Ingestor {
       const end = input.lastTrip.endReason === "gap" ? null : input.lastTrip.endPoint;
       state = { state: "trip_ended", last: end, trip: null, anchor: end };
     }
+    // Without a stored cursor (rows written by an older version) every stored point is replayed.
+    const cursor = input.nextSeq;
+    const applied = cursor === undefined ? input.points : cursor === null ? [] : input.points.filter((p) => p.seq < cursor);
     const closed: ClosedTrip[] = [];
-    for (const p of input.points) {
+    for (const p of applied) {
       const r = step(state, p, this.opts.trip);
       state = r.state;
       for (const e of r.events) if (e.type === "trip_ended") closed.push(e.trip);
@@ -140,13 +194,27 @@ export class Ingestor {
         for (const t of closed) await insertTrip(tx, deviceId, t);
       });
     }
+    const buffer =
+      cursor === undefined
+        ? new ReorderBuffer(this.opts.reorder, {
+            nextSeq: input.maxSeq === null ? null : input.maxSeq + 1,
+            maxTs: state.last?.ts ?? 0,
+            buffered: [],
+            skipped: [],
+          })
+        : new ReorderBuffer(this.opts.reorder, {
+            nextSeq: cursor,
+            maxTs: input.maxTs,
+            // Points stored after the trip's end are a superset of what is still buffered: anything
+            // below the cursor was released, anything at or above it was waiting for a gap to fill.
+            buffered: input.points
+              .filter((p) => cursor === null || p.seq >= cursor)
+              .map((p) => ({ deviceId, ...p })),
+            // Holes only decide between "late" and "duplicate"; both are refused, so none are needed.
+            skipped: [],
+          });
     this.devices.set(deviceId, {
-      buffer: new ReorderBuffer(this.opts.reorder, {
-        nextSeq: input.maxSeq === null ? null : input.maxSeq + 1,
-        maxTs: state.last?.ts ?? 0,
-        buffered: [],
-        skipped: [],
-      }),
+      buffer,
       trip: state,
       lastArrival: this.opts.now(),
     });
@@ -165,29 +233,71 @@ export class Ingestor {
     return () => this.listeners.delete(fn);
   }
 
-  /** Entry point for raw MQTT messages. Returns false if the message was rejected as invalid. */
-  submitRaw(topic: string, payload: Buffer | string): boolean {
+  /**
+   * Entry point for raw MQTT messages. Returns false if the message was rejected as invalid.
+   * `ack` runs once the message is durable: after its batch commits, or at once if it is invalid
+   * (an invalid message will never become valid, so there is no point in redelivering it).
+   */
+  submitRaw(topic: string, payload: Buffer | string, ack?: () => void): boolean {
     this.stats.received++;
     const parsed = parseTelemetry(topic, payload);
     if (!parsed.ok) {
       this.stats.invalid++;
       this.opts.log("warn", "rejected message", { topic, error: parsed.error });
+      ack?.();
       return false;
     }
-    this.enqueue(parsed.msg);
+    this.enqueue(parsed.msg, ack);
     return true;
   }
 
   /** Entry point for already-validated messages. */
-  submit(msg: Telemetry): void {
+  submit(msg: Telemetry, ack?: () => void): void {
     this.stats.received++;
-    this.enqueue(msg);
+    this.enqueue(msg, ack);
   }
 
-  private enqueue(msg: Telemetry): void {
+  /** True once `close()` or `shutdown()` was called; no further messages are accepted. */
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  /** True while the in-memory queue is full; the consumer should stop reading until `whenReady()`. */
+  get saturated(): boolean {
+    return this.pending.length >= this.opts.maxPending;
+  }
+
+  /** Resolves once the queue has drained to half its capacity (immediately if it is not full). */
+  whenReady(): Promise<void> {
+    if (!this.stats.paused && !this.saturated) return Promise.resolve();
+    if (!this.stats.paused) {
+      this.stats.paused = true;
+      this.stats.pauses++;
+      this.opts.log("warn", "queue full, pausing consumer", { depth: this.pending.length });
+    }
+    return new Promise((resolve) => this.readyWaiters.push(resolve));
+  }
+
+  /** Tells the ingestor whether its message source is connected (used to judge pipeline health). */
+  setSourceConnected(connected: boolean): void {
+    if (connected && !this.sourceConnected && this.stats.consecutiveFailures === 0) this.healthySince = this.opts.now();
+    this.sourceConnected = connected;
+  }
+
+  private releaseWaiters(): void {
+    if (!this.stats.paused || this.pending.length > this.opts.maxPending / 2) return;
+    this.stats.paused = false;
+    this.opts.log("info", "queue drained, resuming consumer", { depth: this.pending.length });
+    const waiters = this.readyWaiters;
+    this.readyWaiters = [];
+    for (const w of waiters) w();
+  }
+
+  private enqueue(msg: Telemetry, ack?: () => void): void {
     if (this.closed) throw new Error("ingestor is closed");
-    this.pending.push({ msg, receivedAt: this.opts.now() });
+    this.pending.push({ msg, receivedAt: this.opts.now(), ack });
     this.stats.pending = this.pending.length;
+    if (this.pending.length > this.stats.queuePeak) this.stats.queuePeak = this.pending.length;
     if (this.pending.length >= this.opts.batchMaxSize) {
       this.schedule(0);
     } else {
@@ -219,12 +329,42 @@ export class Ingestor {
   }
 
   async close(): Promise<void> {
+    this.stopTimers();
+    await this.drain();
+  }
+
+  /**
+   * Graceful stop: refuses new messages and commits (and acknowledges) everything already queued.
+   * Unlike `close()` it does not release the reorder buffers: the points they hold are stored, and
+   * the next start rebuilds the buffers from them, so the outcome is the same as never stopping.
+   * Gives up after `timeoutMs`; whatever is still uncommitted was never acknowledged and will be
+   * redelivered by the broker.
+   */
+  async shutdown(timeoutMs = 10_000): Promise<{ drained: boolean; pending: number }> {
+    this.stopTimers();
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<"timeout">((r) => (timer = setTimeout(() => r("timeout"), timeoutMs)));
+    const attempt = async (): Promise<"ok"> => {
+      for (;;) {
+        try {
+          await this.flush();
+          if (this.pending.length === 0) return "ok";
+        } catch {
+          await new Promise((r) => setTimeout(r, this.opts.retryDelayMs));
+        }
+      }
+    };
+    const outcome = await Promise.race([attempt(), deadline]);
+    clearTimeout(timer);
+    return { drained: outcome === "ok", pending: this.pending.length };
+  }
+
+  private stopTimers(): void {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     if (this.staleTimer) clearInterval(this.staleTimer);
     this.timer = null;
     this.staleTimer = null;
-    await this.drain();
   }
 
   /** Current in-memory state of a device (for diagnostics and tests). */
@@ -233,10 +373,13 @@ export class Ingestor {
   }
 
   private sweepStale(): void {
+    // Silence caused by our own outage (broker unreachable, database failing, consumer paused) says
+    // nothing about the devices, so quiet time only counts while the pipeline is healthy.
+    if (!this.sourceConnected || this.stats.consecutiveFailures > 0 || this.stats.paused) return;
     const now = this.opts.now();
     let any = false;
     for (const [id, d] of this.devices) {
-      if (d.buffer.size > 0 && now - d.lastArrival >= this.opts.staleFlushMs) {
+      if (d.buffer.size > 0 && now - Math.max(d.lastArrival, this.healthySince) >= this.opts.staleFlushMs) {
         this.forceFlush.add(id);
         any = true;
       }
@@ -250,29 +393,55 @@ export class Ingestor {
       const force = this.forceFlush;
       this.forceFlush = new Set();
       try {
+        await this.reloadDirty();
         await this.processBatch(batch, force);
+        if (this.stats.consecutiveFailures > 0) {
+          this.opts.log("info", "database recovered", { failures: this.stats.consecutiveFailures });
+          this.stats.consecutiveFailures = 0;
+          this.healthySince = this.opts.now();
+        }
+        for (const p of batch) p.ack?.();
       } catch (err) {
-        // Nothing was committed and no in-memory state changed: put the work back and retry later.
+        // In-memory state is unchanged. The transaction most likely rolled back, but if the failure
+        // hit while COMMIT was in flight it may have committed: rebuild the batch's devices from the
+        // database before the retry, which then sees its own rows as duplicates.
         this.pending = batch.concat(this.pending);
         for (const id of force) this.forceFlush.add(id);
+        for (const p of batch) this.dirty.add(p.msg.deviceId);
+        for (const id of force) this.dirty.add(id);
         this.stats.batchErrors++;
+        this.stats.consecutiveFailures++;
         this.stats.lastError = err instanceof Error ? err.message : String(err);
-        this.opts.log("error", "batch failed, will retry", { error: this.stats.lastError, size: batch.length });
+        const delay = Math.min(
+          this.opts.retryMaxDelayMs,
+          this.opts.retryDelayMs * 2 ** Math.min(this.stats.consecutiveFailures - 1, 16),
+        );
+        this.opts.log("error", "batch failed, will retry", { error: this.stats.lastError, size: batch.length, retryInMs: delay });
         if (!this.closed) {
           if (this.timer) clearTimeout(this.timer);
           this.timer = setTimeout(() => {
             this.timer = null;
             this.flush().catch(() => undefined);
-          }, this.opts.retryDelayMs);
+          }, delay);
         }
         throw err;
       } finally {
         this.stats.pending = this.pending.length;
+        this.releaseWaiters();
       }
     }
   }
 
-  private async processBatch(batch: IncomingPoint[], force: Set<string>): Promise<void> {
+  private async reloadDirty(): Promise<void> {
+    for (const id of [...this.dirty]) {
+      await this.recoverDevice(this.db, id);
+      this.dirty.delete(id);
+      this.stats.reloads++;
+    }
+    this.stats.devices = this.devices.size;
+  }
+
+  private async processBatch(batch: PendingPoint[], force: Set<string>): Promise<void> {
     const started = performance.now();
     // Drop exact redeliveries inside the batch before touching the database.
     const seen = new Set<string>();
@@ -331,7 +500,7 @@ export class Ingestor {
       for (const c of closedTrips) await insertTrip(tx, c.deviceId, c.trip);
       await upsertDevices(
         tx,
-        [...working].map(([deviceId, w]) => ({ deviceId, state: w.trip })),
+        [...working].map(([deviceId, w]) => ({ deviceId, state: w.trip, nextSeq: w.buffer.cursor })),
       );
       return { fresh: fresh.size, late: late.length, applied, closedTrips, working };
     });
