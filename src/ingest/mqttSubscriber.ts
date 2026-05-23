@@ -73,13 +73,17 @@ export async function startSubscriber(
 
   let generation = 0;
   let failures = 0;
+  // Until the first SUBSCRIBE is acknowledged the broker may drop messages for this client, so the
+  // source only counts as connected from then on (later sessions keep the subscription).
+  let subscribed = false;
+  ingestor.setSourceConnected(false);
   client.on("connect", (connack) => {
     generation++;
     failures = 0;
     stats.connects++;
     stats.connected = true;
     client.options.reconnectPeriod = minMs;
-    ingestor.setSourceConnected(true);
+    if (subscribed) ingestor.setSourceConnected(true);
     log("info", "mqtt connected", { sessionPresent: connack.sessionPresent, connects: stats.connects });
   });
   client.on("close", () => {
@@ -134,5 +138,7 @@ export async function startSubscriber(
   client.connect();
   await connected;
   await client.subscribeAsync(opts.topic, { qos: 1 });
+  subscribed = true;
+  ingestor.setSourceConnected(client.connected);
   return client;
 }

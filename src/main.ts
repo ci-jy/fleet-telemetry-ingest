@@ -33,6 +33,8 @@ async function main(): Promise<void> {
     retryMaxDelayMs: config.retryMaxDelayMs,
     log,
   });
+  // Not ready for messages until the subscriber is subscribed (reported in /api/stats).
+  ingestor.setSourceConnected(false);
   const recovered = await withRetry(() => ingestor.recover(), log);
   log("info", "recovered device state by replay", { devices: recovered });
   ingestor.start();

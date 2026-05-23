@@ -45,6 +45,8 @@ jobs:
         run: npm run test:chaos
         env:
           CHAOS_SEEDS: "5"
+          # Keep the containers after the run so their logs can be printed on failure.
+          CHAOS_KEEP: "1"
       - name: Service logs on failure
         if: failure()
         run: docker compose -f docker-compose.chaos.yml -p fleet-chaos logs --tail 300 || true
