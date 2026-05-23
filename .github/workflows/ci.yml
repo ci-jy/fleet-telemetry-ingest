@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Type-check, unit tests, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Type-check (service, scripts, web)
+        run: npm run typecheck
+      - name: Unit and integration tests (PGlite, in-process MQTT broker)
+        run: npm test
+      - name: Build
+        run: npm run build
+
+  chaos:
+    name: Fault-injection suite
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Pull service images
+        run: docker compose -f docker-compose.chaos.yml pull mosquitto postgres toxiproxy
+      - name: Run every fault scenario over 5 seeds against the Compose services
+        run: npm run test:chaos
+        env:
+          CHAOS_SEEDS: "5"
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.chaos.yml -p fleet-chaos logs --tail 300 || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chaos-results
+          path: results/chaos/
+          if-no-files-found: ignore
