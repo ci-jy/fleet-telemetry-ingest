@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.json && tsc -p web/tsconfig.json && vite build --config web/vite.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json",
     "test": "vitest run",
+    "test:chaos": "vitest run --config vitest.chaos.config.ts",
     "start": "node dist/src/main.js",
     "dev": "tsx src/main.ts",
     "dev:web": "vite --config web/vite.config.ts",
@@ -19,8 +20,11 @@
     "load:mqtt": "tsx scripts/mqtt-load.ts",
     "load:api": "k6 run load/k6-api.js",
     "accuracy": "tsx scripts/accuracy.ts",
+    "chaos:matrix": "tsx scripts/chaos-matrix.ts",
     "infra:up": "docker compose up -d",
-    "infra:down": "docker compose down"
+    "infra:down": "docker compose down",
+    "chaos:up": "docker compose -f docker-compose.chaos.yml up -d --build --wait mosquitto postgres toxiproxy",
+    "chaos:down": "docker compose -f docker-compose.chaos.yml down -v"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.8",

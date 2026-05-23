@@ -1,0 +1,4 @@
+[
+  { "name": "mqtt", "listen": "127.0.0.1:21885", "upstream": "127.0.0.1:21884", "enabled": true },
+  { "name": "postgres", "listen": "127.0.0.1:25435", "upstream": "127.0.0.1:25434", "enabled": true }
+]

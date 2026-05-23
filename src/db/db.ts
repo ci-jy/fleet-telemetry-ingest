@@ -49,6 +49,13 @@ export function createPgDb(connectionString: string, opts: PgOptions = {}): Db {
     async transaction<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
       const client = await pool.connect();
       let broken: Error | undefined;
+      // The pool only listens for errors on idle clients. A checked-out client that loses its
+      // server (restart, admin shutdown) emits 'error' too, which would otherwise crash the
+      // process; record it so the client is destroyed on release. The pending query fails as well.
+      const onError = (e: Error) => {
+        broken = e;
+      };
+      client.on("error", onError);
       try {
         await client.query("BEGIN");
         const tx: Queryable = {
@@ -68,6 +75,7 @@ export function createPgDb(connectionString: string, opts: PgOptions = {}): Db {
       } finally {
         // A connection whose ROLLBACK failed (timed out, reset) may be mid-protocol: destroy it
         // instead of returning it to the pool.
+        client.off("error", onError);
         client.release(broken);
       }
     },

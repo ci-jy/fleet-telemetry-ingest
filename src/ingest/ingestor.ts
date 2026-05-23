@@ -77,6 +77,10 @@ export interface IngestStats {
   consecutiveFailures: number;
   /** Devices whose in-memory state was rebuilt from the database after a failed batch. */
   reloads: number;
+  /** Messages held in reorder buffers, waiting for a missing sequence number. */
+  buffered: number;
+  /** Whether the message source (MQTT) is connected. */
+  sourceConnected: boolean;
   devices: number;
   lastBatchMs: number;
   lastError: string | null;
@@ -142,6 +146,8 @@ export class Ingestor {
     pauses: 0,
     consecutiveFailures: 0,
     reloads: 0,
+    buffered: 0,
+    sourceConnected: true,
     devices: 0,
     lastBatchMs: 0,
     lastError: null,
@@ -163,6 +169,7 @@ export class Ingestor {
     );
     for (const { device_id } of rows) await this.recoverDevice(this.db, device_id);
     this.stats.devices = this.devices.size;
+    this.stats.buffered = [...this.devices.values()].reduce((n, d) => n + d.buffer.size, 0);
     return rows.length;
   }
 
@@ -282,6 +289,7 @@ export class Ingestor {
   setSourceConnected(connected: boolean): void {
     if (connected && !this.sourceConnected && this.stats.consecutiveFailures === 0) this.healthySince = this.opts.now();
     this.sourceConnected = connected;
+    this.stats.sourceConnected = connected;
   }
 
   private releaseWaiters(): void {
@@ -514,6 +522,9 @@ export class Ingestor {
     this.stats.applied += result.applied;
     this.stats.tripsClosed += result.closedTrips.length;
     this.stats.devices = this.devices.size;
+    let buffered = 0;
+    for (const d of this.devices.values()) buffered += d.buffer.size;
+    this.stats.buffered = buffered;
     this.stats.lastBatchMs = performance.now() - started;
     for (const c of result.closedTrips) for (const fn of this.listeners) fn({ deviceId: c.deviceId, ...c.trip });
   }

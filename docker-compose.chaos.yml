@@ -1,0 +1,69 @@
+# Fault-injection environment: Mosquitto, PostgreSQL, Toxiproxy and the ingestion service.
+# Host networking (as in docker-compose.yml); everything binds to 127.0.0.1:
+#   Mosquitto 21884, PostgreSQL 25434, Toxiproxy API 28474,
+#   Toxiproxy mqtt 21885 -> 21884, Toxiproxy postgres 25435 -> 25434, service HTTP 23001.
+# The service reaches the broker and the database only through Toxiproxy, so latency and
+# partitions can be injected on those links. The test driver talks to Mosquitto and PostgreSQL
+# directly. Used by `npm run test:chaos` and `npm run chaos:matrix`.
+name: fleet-chaos
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    network_mode: host
+    volumes:
+      - ./infra/mosquitto/mosquitto.chaos.conf:/mosquitto/config/mosquitto.conf:ro
+
+  postgres:
+    image: postgres:16-alpine
+    network_mode: host
+    command: ["postgres", "-c", "listen_addresses=127.0.0.1", "-c", "port=25434"]
+    environment:
+      POSTGRES_USER: fleet
+      POSTGRES_PASSWORD: fleet
+      POSTGRES_DB: fleet
+      PGPORT: "25434"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 25434 -U fleet -d fleet"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    network_mode: host
+    command: ["-host", "127.0.0.1", "-port", "28474", "-config", "/config/toxiproxy.json"]
+    volumes:
+      - ./infra/toxiproxy/toxiproxy.json:/config/toxiproxy.json:ro
+
+  ingest:
+    build:
+      context: .
+      network: host
+    image: fleet-telemetry-ingest:chaos
+    network_mode: host
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      toxiproxy:
+        condition: service_started
+    # Started and stopped by the test driver; no automatic restarts that would hide a crash.
+    restart: "no"
+    stop_grace_period: 20s
+    environment:
+      MQTT_URL: mqtt://127.0.0.1:21885
+      MQTT_CLIENT_ID: fleet-ingest-chaos
+      DATABASE_URL: postgres://fleet:fleet@127.0.0.1:25435/fleet
+      HOST: 127.0.0.1
+      PORT: "23001"
+      INGEST_QUEUE_MAX: "2000"
+      STALE_FLUSH_MS: "5000"
+      DB_CONNECT_TIMEOUT_MS: "2000"
+      DB_QUERY_TIMEOUT_MS: "2000"
+      RETRY_DELAY_MS: "200"
+      RETRY_MAX_DELAY_MS: "2000"
+      MQTT_RECONNECT_MIN_MS: "200"
+      MQTT_RECONNECT_MAX_MS: "2000"
+      SHUTDOWN_TIMEOUT_MS: "15000"
