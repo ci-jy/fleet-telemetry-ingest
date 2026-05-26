@@ -163,6 +163,28 @@ describe("resilience", () => {
     expect(Number((await db.query<{ n: number }>("SELECT count(*) AS n FROM points")).rows[0]!.n)).toBe(100);
   });
 
+  it("does not replay queued batch triggers back to back after a slow failure", async () => {
+    let attempts = 0;
+    const slowFail: Db = {
+      ...db,
+      transaction: async () => {
+        attempts++;
+        await new Promise((r) => setTimeout(r, 100));
+        throw new Error("database shutting down");
+      },
+    };
+    const ing = new Ingestor(slowFail, { batchMaxDelayMs: 2, retryDelayMs: 300, retryMaxDelayMs: 300 });
+    const msgs = generateFleet({ seed: 81, devices: 1, tripsPerDevice: 1 }).messages.slice(0, 40);
+    // Messages keep arriving while the first (slow) batch is in flight, firing the batch timer often.
+    for (const m of msgs) {
+      ing.submit(m);
+      await new Promise((r) => setTimeout(r, 4));
+    }
+    await new Promise((r) => setTimeout(r, 150));
+    expect(attempts).toBe(1);
+    await ing.shutdown(1).catch(() => undefined);
+  });
+
   it("reports saturation at the queue bound and resumes at half capacity", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));

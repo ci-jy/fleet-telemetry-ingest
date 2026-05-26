@@ -127,6 +127,10 @@ export class Ingestor {
   private timer: NodeJS.Timeout | null = null;
   private staleTimer: NodeJS.Timeout | null = null;
   private chain: Promise<void> = Promise.resolve();
+  /** A timer-driven flush is waiting in the chain; another one would add nothing. */
+  private flushQueued = false;
+  /** Earliest time (performance.now()) a timer-driven flush may retry after a failure. */
+  private retryAt = 0;
   private closed = false;
   private readonly listeners = new Set<(trip: ClosedTrip & { deviceId: string }) => void>();
   readonly stats: IngestStats = {
@@ -319,7 +323,7 @@ export class Ingestor {
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;
-      this.flush().catch(() => undefined);
+      this.scheduledFlush();
     }, delayMs);
   }
 
@@ -328,6 +332,21 @@ export class Ingestor {
     const run = this.chain.then(() => this.processPending());
     this.chain = run.catch(() => undefined);
     return run;
+  }
+
+  /**
+   * Flush triggered by the batch or retry timer. While a slow batch runs, the batch timer keeps
+   * firing; those triggers are coalesced into one, and after a failure they wait for the backoff.
+   */
+  private scheduledFlush(): void {
+    if (this.flushQueued) return;
+    this.flushQueued = true;
+    const run = this.chain.then(() => {
+      this.flushQueued = false;
+      if (this.stats.consecutiveFailures > 0 && performance.now() < this.retryAt - 5) return;
+      return this.processPending();
+    });
+    this.chain = run.catch(() => undefined);
   }
 
   /** Waits until all pending messages are stored, then releases every reorder buffer. */
@@ -353,8 +372,9 @@ export class Ingestor {
     this.stopTimers();
     let timer: NodeJS.Timeout | undefined;
     const deadline = new Promise<"timeout">((r) => (timer = setTimeout(() => r("timeout"), timeoutMs)));
-    const attempt = async (): Promise<"ok"> => {
-      for (;;) {
+    let gaveUp = false;
+    const attempt = async (): Promise<"ok" | "timeout"> => {
+      while (!gaveUp) {
         try {
           await this.flush();
           if (this.pending.length === 0) return "ok";
@@ -362,8 +382,10 @@ export class Ingestor {
           await new Promise((r) => setTimeout(r, this.opts.retryDelayMs));
         }
       }
+      return "timeout";
     };
     const outcome = await Promise.race([attempt(), deadline]);
+    gaveUp = true;
     clearTimeout(timer);
     return { drained: outcome === "ok", pending: this.pending.length };
   }
@@ -425,12 +447,13 @@ export class Ingestor {
           this.opts.retryMaxDelayMs,
           this.opts.retryDelayMs * 2 ** Math.min(this.stats.consecutiveFailures - 1, 16),
         );
+        this.retryAt = performance.now() + delay;
         this.opts.log("error", "batch failed, will retry", { error: this.stats.lastError, size: batch.length, retryInMs: delay });
         if (!this.closed) {
           if (this.timer) clearTimeout(this.timer);
           this.timer = setTimeout(() => {
             this.timer = null;
-            this.flush().catch(() => undefined);
+            this.scheduledFlush();
           }, delay);
         }
         throw err;
