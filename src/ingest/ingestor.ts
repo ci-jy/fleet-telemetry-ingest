@@ -314,7 +314,8 @@ export class Ingestor {
   }
 
   private schedule(delayMs: number): void {
-    if (this.timer && delayMs > 0) return;
+    // While a failed batch waits for its retry, new arrivals must not bring the retry forward.
+    if (this.timer && (delayMs > 0 || this.stats.consecutiveFailures > 0)) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => {
       this.timer = null;

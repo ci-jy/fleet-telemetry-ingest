@@ -137,6 +137,32 @@ describe("resilience", () => {
     expect(await lateRows(db)).toEqual(ref.late);
   });
 
+  it("keeps the retry backoff while new messages keep arriving", async () => {
+    let failing = true;
+    let attempts = 0;
+    const down: Db = {
+      ...db,
+      transaction: (fn) => {
+        attempts++;
+        return failing ? Promise.reject(new Error("database down")) : db.transaction(fn);
+      },
+    };
+    const ing = new Ingestor(down, { batchMaxSize: 10, batchMaxDelayMs: 1, retryDelayMs: 200, retryMaxDelayMs: 200 });
+    const msgs = generateFleet({ seed: 71, devices: 1, tripsPerDevice: 1 }).messages.slice(0, 100);
+    for (const m of msgs.slice(0, 10)) ing.submit(m);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(attempts).toBe(1);
+    // A full batch's worth of new arrivals during the backoff does not trigger another attempt.
+    for (const m of msgs.slice(10)) ing.submit(m);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(attempts).toBe(1);
+    failing = false;
+    await new Promise((r) => setTimeout(r, 250));
+    await ing.drain();
+    expect(attempts).toBeLessThanOrEqual(12);
+    expect(Number((await db.query<{ n: number }>("SELECT count(*) AS n FROM points")).rows[0]!.n)).toBe(100);
+  });
+
   it("reports saturation at the queue bound and resumes at half capacity", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => (release = r));
