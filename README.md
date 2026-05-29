@@ -192,7 +192,9 @@ twice, and that the trips come out exactly as they would have without the fault.
   failed batch are therefore rebuilt from the database before the retry; if the batch did commit,
   the retry sees its rows as duplicates and changes nothing. A unit test makes chosen
   transactions commit and then report failure.
-- **Retry with backoff.** Failed batches are retried after 500 ms, doubling up to 5 s.
+- **Retry with backoff.** Failed batches are retried after 500 ms, doubling up to 5 s. Batch
+  triggers that pile up while a slow transaction is failing are coalesced into one, and new
+  arrivals do not bring the retry forward.
   node-postgres is configured with connect and query timeouts, so a partitioned database turns
   into errors instead of hanging forever. A connection whose `ROLLBACK` fails, or that reports an
   error while checked out (for example the server shutting down), is destroyed instead of being
