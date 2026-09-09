@@ -47,8 +47,9 @@ async function main(): Promise<void> {
     onCommit: metrics.observeCommit,
     log,
   });
-  // Not ready for messages until the subscriber is subscribed (reported in /api/stats).
-  ingestor.setSourceConnected(false);
+  // Not ready for messages until the subscriber is subscribed (reported in /api/stats). In
+  // partitioned mode every partition session registers itself as a source instead.
+  if (!partitioned) ingestor.setSourceConnected(false);
   // Partitioned: devices are rebuilt per partition as leases are acquired, not all at startup.
   if (!partitioned) {
     const recovered = await withRetry(() => ingestor.recover(), log);
