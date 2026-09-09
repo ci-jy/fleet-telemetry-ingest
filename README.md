@@ -1,10 +1,31 @@
 # fleet-telemetry-ingest
 
-An MQTT ingestion service for vehicle telemetry, written in TypeScript on Node.js. Devices publish GPS
-and status messages to a Mosquitto broker. The service validates each message and stores the raw
-track in PostgreSQL. A replayable per-device state machine turns the stream into **trips** and
-**idle segments**, even when messages arrive late, out of order, twice, or not at all. A REST API
-and a small React page expose devices, trips and tracks.
+An MQTT ingestion service for vehicle telemetry that platform and backend engineers can scale out
+on Kubernetes: devices hash into 16 topic partitions owned through fenced Postgres leases, and in
+the multi-pod test 13,463 messages survive a scale-up, two pod crashes and a scale-down with
+0 lost, 0 duplicated and trips identical to a single-process run.
+
+| Check (committed test or script) | Faults | Messages | Lost | Duplicated | Result |
+| --- | --- | ---: | ---: | ---: | --- |
+| `test/cluster.integration.test.ts` (5 in-process pods, 8 partitions, [results/cluster-chaos.json](results/cluster-chaos.json)) | scale 1→3, kill + restart, kill without restart, graceful stop, scale 1→2 | 13,463 | 0 | 0 | trips identical to one uninterrupted ingestor; every handoff < 1 s |
+| `npm run test:chaos` (Docker Compose + Toxiproxy, [docs/RESILIENCE.md](docs/RESILIENCE.md)) | SIGKILL, SIGTERM, broker restart, DB restart, latency, DB partition × 5 seeds | ~7,000 per run | 0 | 0 | 30/30 runs pass, recovery ≤ 0.55 s |
+| `deploy/prometheus/rules.test.yaml` (promtool) | p95 latency, consumer lag, error ratio, unowned partitions, target down | – | – | – | every alert fires and stays quiet as specified |
+| `scripts/k8s-e2e.sh --quick` (k3d, 3 replicas, 200 devices) | pod kill every 4 s, scale 1→3→2, Mosquitto restart, Postgres restart | – | – | – | runs in CI (`.github/workflows/k8s.yml`); see [Limitations](#limitations) |
+
+Quickstart (Docker, k3d, Helm and kubectl installed):
+
+```bash
+npm ci && npm test                      # unit, integration and multi-pod handoff tests (no Docker needed)
+bash scripts/k8s-e2e.sh --quick --keep  # k3d cluster + Helm chart + in-cluster chaos Job -> reports/k8s-chaos.json
+kubectl -n fleet port-forward svc/t-prometheus 29090:9090   # metrics and alerts on http://127.0.0.1:29090
+```
+
+Devices publish GPS and status messages to a Mosquitto broker. The service validates each
+message and stores the raw track in PostgreSQL. A replayable per-device state machine turns the
+stream into **trips** and **idle segments**, even when messages arrive late, out of order, twice,
+or not at all. A REST API and a small React page expose devices, trips and tracks. It runs either
+as one process (Docker Compose) or as several replicas on Kubernetes, where each replica owns a
+share of the topic partitions.
 
 The repository also contains:
 
@@ -16,8 +37,11 @@ The repository also contains:
   restarts the service, the broker and the database mid-stream, adds latency and partitions the
   database link, and checks that no message is lost or stored twice and that every trip is
   identical to a fault-free run;
-- a GitHub Actions workflow that type-checks, runs the unit tests, builds, and then runs the
-  fault-injection suite.
+- a Helm chart (`charts/telemetry`) for the ingest StatefulSet, PostgreSQL, Mosquitto, Prometheus,
+  an optional Grafana, a CPU HorizontalPodAutoscaler and an in-cluster chaos Job;
+- Prometheus metrics, SLO alert rules with promtool tests, and a Grafana dashboard;
+- GitHub Actions workflows for the single-process checks (`ci.yml`) and for the chart, rules and
+  k3d chaos suite (`k8s.yml`).
 
 Measured numbers are in [PERFORMANCE.md](PERFORMANCE.md) (throughput, latency, accuracy) and
 [docs/RESILIENCE.md](docs/RESILIENCE.md) (fault scenarios, recovery times, queue depth).
@@ -68,6 +92,12 @@ Source layout:
 | `src/db/` | Schema, SQL, node-postgres and PGlite adapters |
 | `src/api/server.ts` | REST API and static hosting of the web page |
 | `src/sim/` | Seeded fleet generator, fault injection, MQTT publisher |
+| `src/cluster/` | Partition hashing, Postgres leases with fencing tokens, partition coordinator |
+| `src/metrics.ts` | Prometheus metrics (prom-client) |
+| `src/k8s/`, `scripts/k8s-runner.ts` | Kubernetes API client and the in-cluster chaos runner |
+| `charts/telemetry/` | Helm chart (`values.yaml`, `values-ci.yaml`) |
+| `deploy/prometheus/`, `deploy/grafana/` | Alert rules with promtool tests, Grafana dashboard |
+| `scripts/k8s-e2e.sh` | k3d chaos suite |
 | `src/chaos/` | Fault-injection harness: Docker and Toxiproxy control, scenarios, runner, invariant checker, results report |
 | `scripts/` | `simulate.ts`, `mqtt-load.ts`, `accuracy.ts`, `chaos-matrix.ts` |
 | `load/k6-api.js` | k6 API load test |
@@ -76,6 +106,146 @@ Source layout:
 | `test/chaos/` | Fault-injection suite, one file per scenario (needs Docker) |
 | `Dockerfile`, `docker-compose.chaos.yml` | Service image and the fault-injection environment |
 | `.github/workflows/ci.yml` | CI: type-check, unit tests, build, fault-injection suite |
+| `.github/workflows/k8s.yml` | CI: tests, image build, helm lint, kubeconform, promtool, k3d chaos suite |
+
+## Running on Kubernetes
+
+### Cluster architecture
+
+```
+ simulator / devices                k3d cluster (namespace fleet, chart charts/telemetry)
+ ───────────────────   ┌──────────────────────────────────────────────────────────────────────────┐
+ telemetry/p<k>/<id>   │  Mosquitto StatefulSet (MQTT 5, persistence on a PVC)                    │
+ k = fnv1a(id) mod 16 ─┼─▶  16 persistent sessions: fleet-ingest-p0 … fleet-ingest-p15           │
+ QoS 1                 │      │ clean start off, session expiry 24 h: queues while unowned        │
+                       │      ▼                                                                   │
+                       │  ingest StatefulSet (3 replicas, Parallel; HPA on CPU outside CI)         │
+                       │   ingest-0: p0 p3 p5 …   ingest-1: p1 p4 …   ingest-2: p2 p6 …            │
+                       │   each: coordinator (leases) → ingestor (batches, fenced) → /metrics      │
+                       │      │                                         ▲                          │
+                       │      ▼                                         │ scrape (pod discovery)   │
+                       │  PostgreSQL StatefulSet (PVC)              Prometheus (+ rules.yaml)      │
+                       │   points · trips · devices                 Grafana (optional)             │
+                       │   partition_leases · ingest_members                                       │
+                       │                                                                          │
+                       │  e2e Job (scripts/k8s-runner.ts): publishes the fleet, kills/scales pods  │
+                       │  through the Kubernetes API, checks the exact-once ledger                 │
+                       └──────────────────────────────────────────────────────────────────────────┘
+```
+
+Set `PARTITIONS` (the chart sets it to 16) to switch the service into partitioned mode. With
+`PARTITIONS=0`, the default, it runs the single-instance `fleet/+/telemetry` subscription
+described below, unchanged.
+
+### Partitions, leases and fencing
+
+- **Partitioning.** `src/cluster/partition.ts` hashes the device id with 32-bit FNV-1a modulo the
+  partition count; the simulator publishes to `telemetry/p<k>/<deviceId>`. A message whose topic
+  names the wrong partition is rejected, so one device never reaches two owners.
+- **One persistent session per partition.** The owner of partition *k* connects with the fixed
+  client id `fleet-ingest-p<k>`, MQTT 5, clean start off and a session expiry. Whoever owns the
+  partition next resumes the same session, so the broker keeps queuing QoS 1 messages, including
+  unacknowledged ones, while nobody owns it.
+- **Leases.** `partition_leases` has one row per partition: `owner` (pod name plus a random
+  incarnation id), `holder` (pod name), `token` and `expires_at`. A pod takes a row only if it is
+  free, expired, or held by a dead incarnation of the same pod name (a restarted StatefulSet pod
+  takes its own leases back without waiting). Every change of owner increments the token;
+  renewals keep it.
+- **Fencing.** The first statement of every ingest transaction locks the batch's lease rows
+  `FOR SHARE` and checks owner, token and expiry. A stale owner's batch is refused before it writes
+  anything (`FencedError`). Its queued messages for that partition are dropped without
+  acknowledgement, and the broker redelivers them to the new owner. A takeover has to update the
+  row, so it waits for any batch that already passed the check to commit.
+- **Fair share.** Every `LEASE_RENEW_MS` each pod heartbeats `ingest_members` and renews its
+  leases. It then moves towards `ceil(partitions / live members)`: it releases surplus partitions
+  and takes free or expired ones.
+
+Handoff sequence when a pod gains partition *k*:
+
+```
+ old owner                         Postgres                       new owner                    Mosquitto
+ ──────────                        ────────                       ─────────                    ─────────
+ (scale-down / surplus) flush: commit + PUBACK queued
+ close session p<k>                                                                            keeps queuing p<k>
+ UPDATE … SET owner=NULL ──────▶  waits for batches holding
+                                  the row FOR SHARE
+ (crash) nothing: lease expires after LEASE_TTL_MS
+                                  UPDATE … token=token+1 ◀────── acquire
+                                                                  rebuild p<k>'s devices from
+                                                                  points + reorder cursor
+                                                                  connect fleet-ingest-p<k> ──▶ redeliver unacked,
+                                                                                                 then queued
+                                  fence(token) on every batch ◀── commit, then PUBACK
+```
+
+The rebuild is the same replay used on restart (see "Recovery by replay"), so a device's reorder
+buffer and trip state continue exactly where the previous owner's last commit left them.
+
+### Metrics, alerts and dashboard
+
+`GET /metrics` (prom-client) exports:
+
+- `fleet_ingest_messages_total{outcome=stored|duplicate|invalid|late}` and
+  `fleet_ingest_dedupe_rejections_total`;
+- the `fleet_ingest_publish_to_commit_seconds` histogram (from the publisher's MQTT 5 user
+  property `pt`, or arrival time when it is absent);
+- `fleet_ingest_queue_depth` and `_capacity`, `fleet_ingest_paused`, batches, batch errors and
+  fenced batches;
+- `fleet_partitions_owned`, `fleet_partitions_unowned`, `fleet_partition_unowned_seconds`,
+  `fleet_lease_acquisitions_total`, `_releases_total` and `_losses_total`.
+
+`deploy/prometheus/rules.yaml` defines these alerts:
+
+| Alert | Fires when |
+| --- | --- |
+| `FleetIngestLatencyP95High` | p95 publish-to-commit > 2 s for 5 min |
+| `FleetIngestConsumerLagging` | a pod's queue > 80% of capacity, or its consumer is paused, for 2 min |
+| `FleetIngestErrorRatioHigh` | > 5% of batch transactions fail over 5 min |
+| `FleetPartitionsUnowned` | a partition has had no owner for > 30 s |
+| `FleetIngestTargetDown` | Prometheus cannot scrape an ingest pod for 1 min |
+
+`deploy/prometheus/rules.test.yaml` checks with promtool that each alert fires and stays quiet
+when it should. `deploy/grafana/fleet-ingest.json` covers ingest rate, latency percentiles, queue
+depth, owned partitions, lease handoffs, dedupe rejections and unowned time. The chart mounts
+both through `charts/telemetry/files/`, which holds symlinks to `deploy/`. The dashboard ships as a
+ConfigMap; set `grafana.enabled=true` to also run a provisioned Grafana pod (off in CI to save
+memory).
+
+### Run it locally
+
+```bash
+docker build -t fleet-telemetry-ingest:k8s .
+k3d cluster create fleet --no-lb --api-port 127.0.0.1:26443 --k3s-arg "--disable=traefik@server:0"
+k3d image import -c fleet fleet-telemetry-ingest:k8s
+helm upgrade --install t charts/telemetry -n fleet --create-namespace --wait   # values.yaml: HPA on
+kubectl -n fleet port-forward svc/t-prometheus 29090:9090
+```
+
+`values-ci.yaml` holds requests and limits that fit a 6 GB machine: 3 ingest pods at 256 MiB,
+Postgres 384 MiB, Prometheus 256 MiB, no Grafana and no HPA, because the chaos suite scales the
+StatefulSet by hand and an autoscaler would undo that.
+
+### Chaos suite on k3d
+
+`scripts/k8s-e2e.sh [--quick] [--keep]` creates the k3d cluster, builds and imports the image,
+installs the chart with `values-ci.yaml`, and runs the e2e Job. For each scenario the Job
+publishes a fresh 200-vehicle fleet (with the simulator's drops, duplicates, reordering and late
+messages) at 1500 messages/s and starts the fault 20% of the way through:
+
+| Scenario | Fault (through the Kubernetes API) |
+| --- | --- |
+| `pod-kill` | a different ingest pod deleted with grace period 0 every 4 s (3 kills in `--quick`, 6 in the full run) |
+| `scale` | StatefulSet scaled 3 → 1 → 3 → 2, each step waiting until every partition is owned |
+| `mosquitto-restart` | broker pod deleted, restarted from its persistence volume |
+| `postgres-restart` | database pod deleted, restarted from its volume |
+
+After each scenario the Job checks the ledger: every delivered `(device, seq)` stored, none
+twice, nothing extra, no trip stored twice. It records the recovery time, from the last fault
+action until every partition is owned again and a new row has committed. It also checks that
+Prometheus has an `up` target for every ingest pod and that the alert rules are loaded. The script
+writes `reports/k8s-chaos.json` (sent, stored, lost and duplicated counts plus recovery time per
+scenario) and exits non-zero on any loss, duplicate or unscraped pod.
+`.github/workflows/k8s.yml` runs the same script after the static checks and uploads the report.
 
 ## Message format
 
@@ -259,6 +429,10 @@ Configuration is through environment variables. Defaults are shown below.
 | `MQTT_RECONNECT_MIN_MS`, `MQTT_RECONNECT_MAX_MS` | `250`, `5000` |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` (time allowed to drain on SIGTERM) |
 | `WEB_DIST` | `web/dist` (empty string disables static hosting) |
+| `PARTITIONS` | `0` (single instance); > 0 consumes `telemetry/p<k>/+` through leased partitions |
+| `LEASE_TTL_MS`, `LEASE_RENEW_MS` | `10000`, `2000` (partition lease lifetime and renewal interval) |
+| `POD_NAME` | `$HOSTNAME` (lease holder; a restarted pod with the same name reclaims its leases) |
+| `MQTT_SESSION_EXPIRY_S` | `86400` (MQTT 5 session expiry of the partition sessions) |
 
 For frontend development, run `npm run dev:web`. This starts Vite on port 25173 and proxies `/api`
 to the service.
@@ -300,6 +474,18 @@ in-process Aedes MQTT broker on a port between 20000 and 29999, so it needs no D
 | `test/fleetReplay.integration.test.ts` | Seeded 12-vehicle fleets (two seeds) with drops, outages, duplicates, reordering and late messages. Trip count must match ground truth exactly, and every trip distance must be within 1%. |
 | `test/mqttFleet.integration.test.ts` | The same check for a 15-vehicle fleet published through a real MQTT broker. Malformed messages are rejected. |
 | `test/api.test.ts` | All REST endpoints against an ingested fleet |
+| `test/partition.test.ts` | FNV-1a reference vectors, partition range and spread for 200 vehicles, topic parsing, rejection of a message on the wrong partition |
+| `test/leases.test.ts` | Lease acquisition, renewal, expiry and takeover with a higher token, stale-owner writes rejected, immediate handover on release, reclaim by a restarted pod, membership count, a fenced batch writes nothing and stays unacknowledged |
+| `test/cluster.integration.test.ts` | Five ingest pods in one process (shared Postgres and broker) while the fleet is published: scale 1→3, kill + restart, kill without restart, graceful stop, scale 1→2. Every message stored exactly once, trips identical to one uninterrupted ingestor. Writes `results/cluster-chaos.json`. |
+| `test/observability.test.ts` | `/metrics` output, and that every metric named in the alert rules and the dashboard is exported |
+
+Rule and chart checks:
+
+```bash
+promtool test rules deploy/prometheus/rules.test.yaml
+helm lint charts/telemetry -f charts/telemetry/values-ci.yaml
+helm template t charts/telemetry -f charts/telemetry/values-ci.yaml | kubeconform -strict -ignore-missing-schemas -summary
+```
 
 The accuracy sweep, `npm run accuracy -- --seeds 20 --devices 50`, runs many more seeded fleets.
 It writes the distribution of distance errors to `results/accuracy.json`.
@@ -384,10 +570,15 @@ polyline through all the positions the device reported.
 
 ## Design notes
 
-- **One process, one batch at a time.** Batches are processed serially, which preserves
-  per-device ordering without locks. Throughput comes from batching: a single `unnest` insert
-  handles up to 1000 points. Parallelism would need partitioning by device, for example one
-  consumer per topic shard.
+- **One batch at a time per process, partitions across processes.** Within a process, batches
+  are processed serially, which preserves per-device ordering without locks. Throughput comes
+  from batching: a single `unnest` insert handles up to 1000 points. Across processes, devices are
+  partitioned by hash, and each partition has exactly one owner at a time, enforced by fencing
+  tokens in the same transaction as the writes.
+- **Leases in the database that is already there.** The lease table lives in the same Postgres as
+  the data, so the fencing check and the writes it protects commit atomically. There is no
+  separate coordination service, and Kubernetes leases or an etcd lock could not fence a
+  Postgres write.
 - **Event-time windows.** The reorder buffer's window uses device timestamps, not arrival time.
   The result therefore does not depend on how fast messages are replayed, which is why the
   integration tests are deterministic. A wall-clock sweep releases buffers of devices that went
@@ -430,12 +621,28 @@ polyline through all the positions the device reported.
 - **Fault-injection scale.** Each run is a fleet of 8 vehicles with 3 trips each (about 7 000
   deliveries) on one machine, with one fault per run. The scenarios do not cover disk-full
   conditions, clock skew or several faults at once.
-- **Single instance.** Running two instances on the same topic would split a device's messages
-  between them. Horizontal scaling would need sharding by device.
+- **k3d chaos results not recorded here.** On the development host,
+  Docker cannot start containers with their own network namespace (the host is itself a nested
+  container, which is also why the Compose suite uses host networking). k3d nodes therefore
+  cannot start, and `scripts/k8s-e2e.sh` exits non-zero. No `reports/k8s-chaos.json` is
+  committed. The script and `.github/workflows/k8s.yml` target standard Docker hosts such as
+  GitHub's `ubuntu-latest` runners. The partition, lease and handoff logic is covered in process
+  by `test/cluster.integration.test.ts` and `test/leases.test.ts`.
+- **Handoffs during fast replay.** After a handoff the broker redelivers the old owner's
+  unacknowledged messages, which can then arrive behind newer ones. In real time that delay is far
+  inside the 30 s reorder window. A replay compressed 30-40× (as in the chaos runs) can push it
+  past the window, and those messages are then stored and flagged late. Nothing is lost or
+  duplicated, but trips can differ from an uncompressed run. The in-process cluster test
+  therefore uses a reorder window wider than its replay.
+- **Fixed partition count.** Changing `PARTITIONS` re-maps devices to partitions. That needs a
+  stop-the-world migration (drain, then restart every pod with the new count); there is no live
+  re-partitioning.
+- **Fair share, not load-aware.** Pods balance by partition count, not by message rate. A hot
+  partition stays on one pod.
 - **Clock and sequence assumptions.** Devices are trusted to send monotonically increasing
   sequence numbers. Resetting `seq` (for example after a factory reset) needs a new device id.
-- **Out of scope:** authentication, multi-tenancy, cloud deployment, Kubernetes, database
-  replication, map matching or routing, and real vehicle data.
+- **Out of scope:** authentication, multi-tenancy, managed cloud Kubernetes, database
+  replication, autoscaling on custom metrics, alert routing to real receivers, map matching or routing, and real vehicle data.
 
 ## License
 
