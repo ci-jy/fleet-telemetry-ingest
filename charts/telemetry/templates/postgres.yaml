@@ -1,0 +1,62 @@
+{{- $c := dict "root" . "component" "postgres" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  selector:
+    {{- include "telemetry.selector" $c | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  serviceName: {{ include "telemetry.fullname" $c }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "telemetry.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry.selector" $c | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          env:
+            - { name: POSTGRES_USER, value: {{ .Values.postgres.user | quote }} }
+            - { name: POSTGRES_PASSWORD, value: {{ .Values.postgres.password | quote }} }
+            - { name: POSTGRES_DB, value: {{ .Values.postgres.database | quote }} }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", {{ .Values.postgres.user | quote }}, "-d", {{ .Values.postgres.database | quote }}]
+            periodSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.postgres.resources | nindent 12 }}
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.postgres.storage }}

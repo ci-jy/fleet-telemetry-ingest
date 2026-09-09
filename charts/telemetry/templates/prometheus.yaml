@@ -1,0 +1,130 @@
+{{- if .Values.prometheus.enabled }}
+{{- $c := dict "root" . "component" "prometheus" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "telemetry.fullname" $c }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "telemetry.fullname" $c }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.prometheus.scrapeInterval }}
+      evaluation_interval: {{ .Values.prometheus.scrapeInterval }}
+    rule_files:
+      - /etc/prometheus/rules.yaml
+    scrape_configs:
+      # Every ingest pod, discovered through the Kubernetes API (this namespace only).
+      - job_name: ingest
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [{{ .Release.Namespace | quote }}]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+            regex: ingest
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            regex: "true"
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            regex: (.+);(.+)
+            replacement: $1:$2
+            target_label: __address__
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+  rules.yaml: |
+{{ .Files.Get "files/rules.yaml" | indent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "telemetry.selector" $c | nindent 4 }}
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "telemetry.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry.selector" $c | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/rules.yaml" | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "telemetry.fullname" $c }}
+      containers:
+        - name: prometheus
+          image: {{ .Values.prometheus.image }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.prometheus.retention }}
+            - --web.enable-lifecycle
+          ports:
+            - { name: http, containerPort: 9090 }
+          readinessProbe:
+            httpGet: { path: /-/ready, port: http }
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.prometheus.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus }
+            - { name: data, mountPath: /prometheus }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "telemetry.fullname" $c }}
+        - name: data
+          emptyDir: {}
+{{- end }}

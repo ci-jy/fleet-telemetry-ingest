@@ -1,0 +1,106 @@
+{{- $c := dict "root" . "component" "ingest" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingest
+spec:
+  # Headless: Prometheus scrapes each pod and the StatefulSet gives pods stable names.
+  clusterIP: None
+  selector:
+    {{- include "telemetry.selector" $c | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.ingest.port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingest
+spec:
+  serviceName: {{ include "telemetry.fullname" $c }}
+  replicas: {{ .Values.ingest.replicas }}
+  # Pods own partitions through leases, not through their ordinal, so they can start and stop in parallel.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "telemetry.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry.selector" $c | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.ingest.port | quote }}
+        prometheus.io/path: /metrics
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.ingest.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: ingest
+          image: "{{ .Values.ingest.image.repository }}:{{ .Values.ingest.image.tag }}"
+          imagePullPolicy: {{ .Values.ingest.image.pullPolicy }}
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - { name: PARTITIONS, value: {{ .Values.partitions | quote }} }
+            - { name: MQTT_URL, value: {{ include "telemetry.mqttUrl" . | quote }} }
+            - { name: MQTT_CLIENT_ID, value: "fleet-ingest" }
+            - { name: MQTT_SESSION_EXPIRY_S, value: {{ .Values.ingest.sessionExpirySeconds | quote }} }
+            - { name: DATABASE_URL, value: {{ include "telemetry.databaseUrl" . | quote }} }
+            - { name: HOST, value: "0.0.0.0" }
+            - { name: PORT, value: {{ .Values.ingest.port | quote }} }
+            - { name: LEASE_TTL_MS, value: {{ .Values.ingest.leaseTtlMs | quote }} }
+            - { name: LEASE_RENEW_MS, value: {{ .Values.ingest.leaseRenewMs | quote }} }
+            - { name: INGEST_QUEUE_MAX, value: {{ .Values.ingest.queueMax | quote }} }
+            - { name: SHUTDOWN_TIMEOUT_MS, value: {{ .Values.ingest.shutdownTimeoutMs | quote }} }
+            - { name: WEB_DIST, value: "" }
+            {{- range $k, $v := .Values.ingest.extraEnv }}
+            - { name: {{ $k }}, value: {{ $v | quote }} }
+            {{- end }}
+          ports:
+            - { name: http, containerPort: {{ .Values.ingest.port }} }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            tcpSocket: { port: http }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.ingest.resources | nindent 12 }}
+{{- if .Values.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: {{ include "telemetry.fullname" $c }}
+  minReplicas: {{ .Values.hpa.minReplicas }}
+  maxReplicas: {{ .Values.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 120
+{{- end }}

@@ -1,0 +1,94 @@
+{{- $c := dict "root" . "component" "grafana" }}
+# The dashboard is always shipped as a ConfigMap (labelled grafana_dashboard=1 for sidecar-based
+# Grafana installs); the Grafana pod itself is optional.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry.fullname" $c }}-dashboards
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  fleet-ingest.json: |
+{{ .Files.Get "files/dashboard.json" | indent 4 }}
+{{- if .Values.grafana.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry.fullname" $c }}-provisioning
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ .Release.Name }}-prometheus:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: fleet
+        type: file
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "telemetry.selector" $c | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "telemetry.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry.selector" $c | nindent 8 }}
+    spec:
+      containers:
+        - name: grafana
+          image: {{ .Values.grafana.image }}
+          env:
+            - { name: GF_SECURITY_ADMIN_PASSWORD, value: {{ .Values.grafana.adminPassword | quote }} }
+            - { name: GF_AUTH_ANONYMOUS_ENABLED, value: "true" }
+          ports:
+            - { name: http, containerPort: 3000 }
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+          resources:
+            {{- toYaml .Values.grafana.resources | nindent 12 }}
+          volumeMounts:
+            - { name: provisioning, mountPath: /etc/grafana/provisioning/datasources/datasources.yaml, subPath: datasources.yaml }
+            - { name: provisioning, mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml, subPath: dashboards.yaml }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+      volumes:
+        - name: provisioning
+          configMap:
+            name: {{ include "telemetry.fullname" $c }}-provisioning
+        - name: dashboards
+          configMap:
+            name: {{ include "telemetry.fullname" $c }}-dashboards
+{{- end }}

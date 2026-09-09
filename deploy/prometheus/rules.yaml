@@ -1,0 +1,57 @@
+groups:
+  - name: fleet-ingest-recording
+    rules:
+      - record: fleet:publish_to_commit_seconds:p95
+        expr: histogram_quantile(0.95, sum by (le) (rate(fleet_ingest_publish_to_commit_seconds_bucket[5m])))
+      - record: fleet:batch_error_ratio:rate5m
+        expr: |
+          sum(rate(fleet_ingest_batch_errors_total[5m]))
+            /
+          clamp_min(sum(rate(fleet_ingest_batches_total[5m])) + sum(rate(fleet_ingest_batch_errors_total[5m])), 1e-9)
+      - record: fleet:queue_saturation:max
+        expr: max(fleet_ingest_queue_depth / clamp_min(fleet_ingest_queue_capacity, 1))
+
+  - name: fleet-ingest-slo
+    rules:
+      - alert: FleetIngestLatencyP95High
+        expr: fleet:publish_to_commit_seconds:p95 > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 publish-to-commit latency is {{ $value | humanizeDuration }} (SLO: 2s)"
+          description: "Messages take too long from the device publish to the database commit; check queue depth, database latency and partition ownership."
+
+      - alert: FleetIngestConsumerLagging
+        expr: fleet:queue_saturation:max > 0.8 or max(fleet_ingest_paused) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An ingest pod's queue is above 80% of capacity or its consumer is paused"
+          description: "The consumer is falling behind; the broker is queueing for its partitions. Scale out or check the database."
+
+      - alert: FleetIngestErrorRatioHigh
+        expr: fleet:batch_error_ratio:rate5m > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of ingest batches are failing"
+          description: "Batch transactions are failing and being retried; the database may be unreachable or overloaded."
+
+      - alert: FleetPartitionsUnowned
+        expr: max(fleet_partition_unowned_seconds) > 30
+        labels:
+          severity: critical
+        annotations:
+          summary: "A partition has had no owner for {{ $value | humanizeDuration }}"
+          description: "No ingest pod holds the lease of at least one partition; its messages are only being queued by the broker."
+
+      - alert: FleetIngestTargetDown
+        expr: up{job="ingest"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus cannot scrape ingest pod {{ $labels.pod }}"

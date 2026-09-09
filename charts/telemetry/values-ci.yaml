@@ -1,0 +1,28 @@
+# Sized for a 6 GB machine running k3d (one k3s node) and the chaos suite.
+partitions: 16
+ingest:
+  replicas: 3
+  leaseTtlMs: 6000
+  leaseRenewMs: 1000
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { cpu: "1", memory: 256Mi }
+# The chaos suite scales the StatefulSet by hand; an autoscaler would fight it.
+hpa:
+  enabled: false
+postgres:
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { memory: 384Mi }
+prometheus:
+  enabled: true
+  retention: 2h
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { memory: 256Mi }
+grafana:
+  enabled: false
+e2e:
+  devices: 200
+  tripsPerDevice: 1
+  rate: 1500

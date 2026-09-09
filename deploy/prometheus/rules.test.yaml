@@ -1,0 +1,123 @@
+# promtool test rules deploy/prometheus/rules.test.yaml
+rule_files:
+  - rules.yaml
+
+evaluation_interval: 15s
+
+tests:
+  # p95 latency: 100 fast commits per minute stay quiet; a shift to 5-10 s commits fires after 5 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'fleet_ingest_publish_to_commit_seconds_bucket{pod="ingest-0",le="0.1"}'
+        values: '0+100x10 1000x20'
+      - series: 'fleet_ingest_publish_to_commit_seconds_bucket{pod="ingest-0",le="1"}'
+        values: '0+100x10 1000x20'
+      - series: 'fleet_ingest_publish_to_commit_seconds_bucket{pod="ingest-0",le="10"}'
+        values: '0+100x10 1000+100x20'
+      - series: 'fleet_ingest_publish_to_commit_seconds_bucket{pod="ingest-0",le="+Inf"}'
+        values: '0+100x10 1000+100x20'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FleetIngestLatencyP95High
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: FleetIngestLatencyP95High
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: FleetIngestLatencyP95High
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "p95 publish-to-commit latency is 9.55s (SLO: 2s)"
+              description: "Messages take too long from the device publish to the database commit; check queue depth, database latency and partition ownership."
+    promql_expr_test:
+      - expr: fleet:publish_to_commit_seconds:p95 < 0.1
+        eval_time: 5m
+        exp_samples:
+          - labels: 'fleet:publish_to_commit_seconds:p95'
+            value: 0.095
+
+  # Queue saturation: a queue at 90% of capacity for 2 minutes fires; a brief spike does not.
+  - interval: 30s
+    input_series:
+      - series: 'fleet_ingest_queue_depth{pod="ingest-0"}'
+        values: '100 9500 100 100 9000x10'
+      - series: 'fleet_ingest_queue_capacity{pod="ingest-0"}'
+        values: '10000x15'
+      - series: 'fleet_ingest_paused{pod="ingest-0"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FleetIngestConsumerLagging
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: FleetIngestConsumerLagging
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "An ingest pod's queue is above 80% of capacity or its consumer is paused"
+              description: "The consumer is falling behind; the broker is queueing for its partitions. Scale out or check the database."
+
+  # Error ratio: 1 failure per 100 batches stays quiet; 1 in 5 fires after 5 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'fleet_ingest_batches_total{pod="ingest-0"}'
+        values: '0+100x10 1000+80x15'
+      - series: 'fleet_ingest_batch_errors_total{pod="ingest-0"}'
+        values: '0+1x10 10+20x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FleetIngestErrorRatioHigh
+        exp_alerts: []
+      - eval_time: 22m
+        alertname: FleetIngestErrorRatioHigh
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "20% of ingest batches are failing"
+              description: "Batch transactions are failing and being retried; the database may be unreachable or overloaded."
+
+  # Unowned partitions: a 10 s handoff is fine; 45 s without an owner fires at once.
+  - interval: 15s
+    input_series:
+      - series: 'fleet_partition_unowned_seconds{pod="ingest-0"}'
+        values: '0 10 0 0 15 30 45 60'
+      - series: 'fleet_partition_unowned_seconds{pod="ingest-1"}'
+        values: '0 8 0 0 14 29 44 59'
+    alert_rule_test:
+      - eval_time: 15s
+        alertname: FleetPartitionsUnowned
+        exp_alerts: []
+      - eval_time: 75s
+        alertname: FleetPartitionsUnowned
+        exp_alerts: []
+      - eval_time: 90s
+        alertname: FleetPartitionsUnowned
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "A partition has had no owner for 45s"
+              description: "No ingest pod holds the lease of at least one partition; its messages are only being queued by the broker."
+
+  # Scrape target down for over a minute.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="ingest",pod="ingest-2"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: FleetIngestTargetDown
+        exp_alerts: []
+      - eval_time: 150s
+        alertname: FleetIngestTargetDown
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: ingest
+              pod: ingest-2
+            exp_annotations:
+              summary: "Prometheus cannot scrape ingest pod ingest-2"

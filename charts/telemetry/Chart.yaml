@@ -1,0 +1,6 @@
+apiVersion: v2
+name: telemetry
+description: Partitioned MQTT vehicle telemetry ingestion with PostgreSQL, Mosquitto, Prometheus and optional Grafana
+type: application
+version: 0.2.0
+appVersion: "0.2.0"

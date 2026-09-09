@@ -1,0 +1,85 @@
+{{- $c := dict "root" . "component" "mosquitto" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+data:
+  mosquitto.conf: |
+    # MQTT 5 broker with persistent sessions: each partition's session (fixed client id, clean
+    # start off, session expiry set by the client) keeps queuing QoS 1 messages while no pod owns it.
+    listener 1883 0.0.0.0
+    allow_anonymous true
+    persistence true
+    persistence_location /mosquitto/data/
+    autosave_interval {{ .Values.mosquitto.autosaveIntervalSeconds }}
+    max_queued_messages {{ .Values.mosquitto.maxQueuedMessages }}
+    max_inflight_messages {{ .Values.mosquitto.maxInflightMessages }}
+    log_dest stdout
+    log_type error
+    log_type warning
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mosquitto
+spec:
+  selector:
+    {{- include "telemetry.selector" $c | nindent 4 }}
+  ports:
+    - name: mqtt
+      port: 1883
+      targetPort: 1883
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mosquitto
+spec:
+  serviceName: {{ include "telemetry.fullname" $c }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "telemetry.selector" $c | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry.selector" $c | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Values.mosquitto | toJson | sha256sum }}
+    spec:
+      terminationGracePeriodSeconds: 20
+      securityContext:
+        fsGroup: 1883
+      containers:
+        - name: mosquitto
+          image: {{ .Values.mosquitto.image }}
+          ports:
+            - { name: mqtt, containerPort: 1883 }
+          readinessProbe:
+            tcpSocket: { port: 1883 }
+            periodSeconds: 2
+          resources:
+            {{- toYaml .Values.mosquitto.resources | nindent 12 }}
+          volumeMounts:
+            - { name: config, mountPath: /mosquitto/config }
+            - { name: data, mountPath: /mosquitto/data }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "telemetry.fullname" $c }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: {{ .Values.mosquitto.storage }}

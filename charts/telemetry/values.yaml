@@ -1,0 +1,82 @@
+# Number of topic partitions (telemetry/p<k>/<device>). Fixed for the lifetime of the data.
+partitions: 16
+
+ingest:
+  image:
+    repository: fleet-telemetry-ingest
+    tag: k8s
+    pullPolicy: IfNotPresent
+  replicas: 3
+  port: 23000
+  leaseTtlMs: 10000
+  leaseRenewMs: 2000
+  # How long Mosquitto keeps a partition's session (and queues for it) while no pod owns it.
+  sessionExpirySeconds: 86400
+  queueMax: 10000
+  shutdownTimeoutMs: 15000
+  terminationGracePeriodSeconds: 30
+  extraEnv: {}
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: "1", memory: 384Mi }
+
+# CPU-based autoscaling of the ingest StatefulSet (k3s ships metrics-server).
+hpa:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+postgres:
+  image: postgres:16-alpine
+  user: fleet
+  password: fleet
+  database: fleet
+  storage: 1Gi
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 512Mi }
+
+mosquitto:
+  image: eclipse-mosquitto:2
+  storage: 512Mi
+  # Mosquitto writes its persistence file on shutdown and at this interval.
+  autosaveIntervalSeconds: 5
+  maxQueuedMessages: 1000000
+  maxInflightMessages: 5000
+  resources:
+    requests: { cpu: 50m, memory: 32Mi }
+    limits: { memory: 256Mi }
+
+prometheus:
+  enabled: true
+  image: prom/prometheus:v2.55.1
+  scrapeInterval: 5s
+  retention: 6h
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+
+grafana:
+  enabled: false
+  image: grafana/grafana:11.3.0
+  adminPassword: admin
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { memory: 256Mi }
+
+# In-cluster chaos runner (rendered by scripts/k8s-e2e.sh, off for normal installs).
+e2e:
+  enabled: false
+  scenarios: pod-kill,scale,mosquitto-restart,postgres-restart
+  devices: 200
+  tripsPerDevice: 1
+  rate: 1500
+  seed: 7
+  podKills: 4
+  podKillEveryMs: 4000
+  backoffLimit: 0
+  activeDeadlineSeconds: 2400
+  resources:
+    requests: { cpu: 100m, memory: 192Mi }
+    limits: { memory: 768Mi }

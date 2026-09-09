@@ -1,0 +1,89 @@
+{{- if .Values.e2e.enabled }}
+{{- $c := dict "root" . "component" "e2e" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+---
+# The runner kills and restarts pods and scales the ingest StatefulSet.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    verbs: ["get", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "telemetry.fullname" $c }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "telemetry.fullname" $c }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "telemetry.fullname" $c }}
+  labels:
+    {{- include "telemetry.labels" . | nindent 4 }}
+    app.kubernetes.io/component: e2e
+spec:
+  backoffLimit: {{ .Values.e2e.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.e2e.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "telemetry.selector" $c | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "telemetry.fullname" $c }}
+      restartPolicy: Never
+      containers:
+        - name: runner
+          image: "{{ .Values.ingest.image.repository }}:{{ .Values.ingest.image.tag }}"
+          imagePullPolicy: {{ .Values.ingest.image.pullPolicy }}
+          command: ["node", "dist/scripts/k8s-runner.js"]
+          env:
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - name: NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: MQTT_URL, value: {{ include "telemetry.mqttUrl" . | quote }} }
+            - { name: DATABASE_URL, value: {{ include "telemetry.databaseUrl" . | quote }} }
+            {{- if .Values.prometheus.enabled }}
+            - { name: PROMETHEUS_URL, value: "http://{{ .Release.Name }}-prometheus:9090" }
+            {{- end }}
+            - { name: INGEST_STATEFULSET, value: "{{ .Release.Name }}-ingest" }
+            - { name: INGEST_SELECTOR, value: "app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=ingest" }
+            - { name: MOSQUITTO_SELECTOR, value: "app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=mosquitto" }
+            - { name: POSTGRES_SELECTOR, value: "app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=postgres" }
+            - { name: PARTITIONS, value: {{ .Values.partitions | quote }} }
+            - { name: REPLICAS, value: {{ .Values.ingest.replicas | quote }} }
+            - { name: SCENARIOS, value: {{ .Values.e2e.scenarios | quote }} }
+            - { name: DEVICES, value: {{ .Values.e2e.devices | quote }} }
+            - { name: TRIPS, value: {{ .Values.e2e.tripsPerDevice | quote }} }
+            - { name: RATE, value: {{ .Values.e2e.rate | quote }} }
+            - { name: SEED, value: {{ .Values.e2e.seed | quote }} }
+            - { name: POD_KILLS, value: {{ .Values.e2e.podKills | quote }} }
+            - { name: POD_KILL_EVERY_MS, value: {{ .Values.e2e.podKillEveryMs | quote }} }
+          resources:
+            {{- toYaml .Values.e2e.resources | nindent 12 }}
+{{- end }}
