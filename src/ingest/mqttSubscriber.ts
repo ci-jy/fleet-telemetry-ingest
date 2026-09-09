@@ -10,6 +10,12 @@ export interface SubscriberOptions {
   /** ...up to this cap. */
   reconnectMaxMs?: number;
   keepaliveS?: number;
+  /** MQTT protocol version: 4 (3.1.1, default) or 5. */
+  protocolVersion?: 4 | 5;
+  /** MQTT 5 only: how long the broker keeps the session (and queues for it) after a disconnect. */
+  sessionExpiryS?: number;
+  /** Name of this source in the ingestor's health tracking (one per MQTT session). */
+  source?: string;
   /** Give up if the first connection is not up within this time. */
   connectDeadlineMs?: number;
   log?: (level: "info" | "warn" | "error", msg: string, extra?: Record<string, unknown>) => void;
@@ -51,9 +57,11 @@ export async function startSubscriber(
     reconnectPeriod: minMs,
     connectTimeout: 5_000,
     keepalive: opts.keepaliveS ?? 30,
-    protocolVersion: 4,
+    protocolVersion: opts.protocolVersion ?? 4,
     manualConnect: true,
+    ...(opts.protocolVersion === 5 ? { properties: { sessionExpiryInterval: opts.sessionExpiryS ?? 86_400 } } : {}),
   };
+  const source = opts.source ?? "default";
   const client = mqtt.connect(opts.url, options) as MqttClient & { subscriberStats: SubscriberStats };
   const stats: SubscriberStats = { connected: false, connects: 0, disconnects: 0, staleAcks: 0 };
   client.subscriberStats = stats;
@@ -76,14 +84,14 @@ export async function startSubscriber(
   // Until the first SUBSCRIBE is acknowledged the broker may drop messages for this client, so the
   // source only counts as connected from then on (later sessions keep the subscription).
   let subscribed = false;
-  ingestor.setSourceConnected(false);
+  ingestor.setSourceConnected(false, source);
   client.on("connect", (connack) => {
     generation++;
     failures = 0;
     stats.connects++;
     stats.connected = true;
     client.options.reconnectPeriod = minMs;
-    if (subscribed) ingestor.setSourceConnected(true);
+    if (subscribed) ingestor.setSourceConnected(true, source);
     log("info", "mqtt connected", { sessionPresent: connack.sessionPresent, connects: stats.connects });
   });
   client.on("close", () => {
@@ -92,7 +100,7 @@ export async function startSubscriber(
       log("warn", "mqtt connection lost");
     }
     stats.connected = false;
-    ingestor.setSourceConnected(false);
+    ingestor.setSourceConnected(false, source);
     client.options.reconnectPeriod = Math.min(maxMs, minMs * 2 ** Math.min(failures, 16));
     failures++;
   });
@@ -115,7 +123,9 @@ export async function startSubscriber(
         send({ cmd: "puback", messageId: id });
       };
     }
-    ingestor.submitRaw(packet.topic, packet.payload as Buffer, ack);
+    // Publishers may stamp their send time (MQTT 5 user property `pt`, epoch ms) for latency metrics.
+    const pt = Number(packet.properties?.userProperties?.pt);
+    ingestor.submitRaw(packet.topic, packet.payload as Buffer, ack, Number.isFinite(pt) && pt > 0 ? pt : undefined);
     if (ingestor.saturated) void ingestor.whenReady().then(() => callback());
     else callback();
   };
@@ -139,6 +149,6 @@ export async function startSubscriber(
   await connected;
   await client.subscribeAsync(opts.topic, { qos: 1 });
   subscribed = true;
-  ingestor.setSourceConnected(client.connected);
+  ingestor.setSourceConnected(client.connected, source);
   return client;
 }

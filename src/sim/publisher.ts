@@ -1,4 +1,5 @@
 import type { MqttClient } from "mqtt";
+import { partitionTopic } from "../cluster/partition.js";
 import { topicFor, type Telemetry } from "../domain/telemetry.js";
 
 /**
@@ -9,14 +10,25 @@ import { topicFor, type Telemetry } from "../domain/telemetry.js";
 export async function publishAll(
   client: MqttClient,
   messages: Iterable<Telemetry>,
-  opts: { inflight?: number; onPublished?: (msg: Telemetry) => void } = {},
+  opts: {
+    inflight?: number;
+    onPublished?: (msg: Telemetry) => void;
+    /** Publish to `telemetry/p<k>/<device>` with this many partitions instead of `fleet/<device>/telemetry`. */
+    partitions?: number;
+    /** Stamp the send time as MQTT 5 user property `pt` (needs a protocol version 5 client). */
+    stampPublishTime?: boolean;
+  } = {},
 ): Promise<number> {
   const inflight = opts.inflight ?? 500;
   const outstanding = new Set<Promise<void>>();
   let n = 0;
   for (const msg of messages) {
     const p: Promise<void> = client
-      .publishAsync(topicFor(msg.deviceId), JSON.stringify(msg), { qos: 1 })
+      .publishAsync(
+        opts.partitions ? partitionTopic(msg.deviceId, opts.partitions) : topicFor(msg.deviceId),
+        JSON.stringify(msg),
+        opts.stampPublishTime ? { qos: 1, properties: { userProperties: { pt: String(Date.now()) } } } : { qos: 1 },
+      )
       .then(() => {
         outstanding.delete(p);
       });
