@@ -70,6 +70,25 @@ CREATE INDEX IF NOT EXISTS idle_segments_trip_idx ON idle_segments (trip_id);
 -- Next sequence number the device's reorder buffer waits for. Stored points at or above it that
 -- are not late were still buffered, so a restart can rebuild the buffer exactly.
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS reorder_next_seq bigint;
+
+-- Partition ownership for horizontally scaled ingestion. One row per partition; a pod owns it
+-- while expires_at is in the future. token increases on every change of owner and fences writes:
+-- a batch commits only if its pod still holds the token it acquired.
+CREATE TABLE IF NOT EXISTS partition_leases (
+  partition   integer PRIMARY KEY,
+  owner       text,
+  holder      text,
+  token       bigint NOT NULL DEFAULT 0,
+  expires_at  timestamptz NOT NULL DEFAULT 'epoch',
+  acquired_at timestamptz,
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+
+-- Live ingest pods, used to compute each pod's fair share of partitions.
+CREATE TABLE IF NOT EXISTS ingest_members (
+  member_id  text PRIMARY KEY,
+  expires_at timestamptz NOT NULL
+);
 `;
 
 export async function migrate(db: Db): Promise<void> {

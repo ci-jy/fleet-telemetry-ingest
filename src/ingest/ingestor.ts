@@ -38,6 +38,17 @@ export interface IngestorOptions {
    */
   maxPending: number;
   now: () => number;
+  /** Partition count of partitioned topics; a message on the wrong partition is rejected. */
+  partitions?: number;
+  /**
+   * Runs first inside every batch transaction with the devices the batch writes. Throws a
+   * `FencedError` (from the lease module) if this process no longer owns some of them.
+   */
+  fence?: (tx: Queryable, deviceIds: ReadonlySet<string>) => Promise<void>;
+  /** Called when a batch was refused by `fence`; the owner of the lost partitions drops them. */
+  onFenced?: (err: Error & { partitions: number[] }) => void;
+  /** Called after each commit with the committed messages (for latency metrics). */
+  onCommit?: (points: readonly CommittedPoint[], committedAt: number) => void;
   log: (level: "info" | "warn" | "error", msg: string, extra?: Record<string, unknown>) => void;
 }
 
@@ -84,11 +95,23 @@ export interface IngestStats {
   devices: number;
   lastBatchMs: number;
   lastError: string | null;
+  /** Batches refused because a partition lease was lost. */
+  fenced: number;
+  /** Queued messages dropped (unacknowledged) because their partition moved to another pod. */
+  handedOff: number;
+}
+
+export interface CommittedPoint {
+  /** Wall-clock arrival time (ms). */
+  receivedAt: number;
+  /** Publisher's wall-clock send time (ms), when the publisher reported it. */
+  publishedAt?: number;
 }
 
 /** A queued message plus the callback that acknowledges it to the broker once it is committed. */
 interface PendingPoint extends IncomingPoint {
   ack?: () => void;
+  publishedAt?: number;
 }
 
 interface DeviceRuntime {
@@ -122,6 +145,8 @@ export class Ingestor {
   private dirty = new Set<string>();
   private readyWaiters: (() => void)[] = [];
   private sourceConnected = true;
+  /** Connection state per message source (one per MQTT session); healthy only if all are up. */
+  private readonly sources = new Map<string, boolean>();
   /** Wall-clock time since which the pipeline has been healthy (consumer connected, database up). */
   private healthySince = 0;
   private timer: NodeJS.Timeout | null = null;
@@ -155,6 +180,8 @@ export class Ingestor {
     devices: 0,
     lastBatchMs: 0,
     lastError: null,
+    fenced: 0,
+    handedOff: 0,
   };
 
   constructor(
@@ -168,13 +195,42 @@ export class Ingestor {
 
   /** Rebuilds every known device's state by replaying its stored points since its last persisted trip. */
   async recover(): Promise<number> {
+    return this.recoverWhere(() => true);
+  }
+
+  /**
+   * Rebuilds the state of the stored devices matching `owned` (the devices of partitions this
+   * process just gained), exactly as a restart would.
+   */
+  async recoverWhere(owned: (deviceId: string) => boolean): Promise<number> {
     const { rows } = await this.db.query<{ device_id: string }>(
       `SELECT device_id FROM devices UNION SELECT DISTINCT device_id FROM points`,
     );
-    for (const { device_id } of rows) await this.recoverDevice(this.db, device_id);
+    const mine = rows.filter((r) => owned(r.device_id));
+    for (const { device_id } of mine) await this.recoverDevice(this.db, device_id);
     this.stats.devices = this.devices.size;
     this.stats.buffered = [...this.devices.values()].reduce((n, d) => n + d.buffer.size, 0);
-    return rows.length;
+    return mine.length;
+  }
+
+  /**
+   * Forgets the devices matching `lost` (their partition moved to another process): queued
+   * messages are dropped without acknowledgement, so the broker redelivers them to the new owner,
+   * and their in-memory state is discarded. The stored rows are the new owner's starting point.
+   */
+  dropWhere(lost: (deviceId: string) => boolean): number {
+    const before = this.pending.length;
+    this.pending = this.pending.filter((p) => !lost(p.msg.deviceId));
+    const dropped = before - this.pending.length;
+    for (const id of [...this.devices.keys()]) if (lost(id)) this.devices.delete(id);
+    for (const id of [...this.forceFlush]) if (lost(id)) this.forceFlush.delete(id);
+    for (const id of [...this.dirty]) if (lost(id)) this.dirty.delete(id);
+    this.stats.handedOff += dropped;
+    this.stats.pending = this.pending.length;
+    this.stats.devices = this.devices.size;
+    this.stats.buffered = [...this.devices.values()].reduce((n, d) => n + d.buffer.size, 0);
+    this.releaseWaiters();
+    return dropped;
   }
 
   /**
@@ -249,16 +305,16 @@ export class Ingestor {
    * `ack` runs once the message is durable: after its batch commits, or at once if it is invalid
    * (an invalid message will never become valid, so there is no point in redelivering it).
    */
-  submitRaw(topic: string, payload: Buffer | string, ack?: () => void): boolean {
+  submitRaw(topic: string, payload: Buffer | string, ack?: () => void, publishedAt?: number): boolean {
     this.stats.received++;
-    const parsed = parseTelemetry(topic, payload);
+    const parsed = parseTelemetry(topic, payload, this.opts.partitions);
     if (!parsed.ok) {
       this.stats.invalid++;
       this.opts.log("warn", "rejected message", { topic, error: parsed.error });
       ack?.();
       return false;
     }
-    this.enqueue(parsed.msg, ack);
+    this.enqueue(parsed.msg, ack, publishedAt);
     return true;
   }
 
@@ -290,7 +346,9 @@ export class Ingestor {
   }
 
   /** Tells the ingestor whether its message source is connected (used to judge pipeline health). */
-  setSourceConnected(connected: boolean): void {
+  setSourceConnected(connected: boolean, source = "default"): void {
+    this.sources.set(source, connected);
+    connected = [...this.sources.values()].every(Boolean);
     if (connected && !this.sourceConnected && this.stats.consecutiveFailures === 0) this.healthySince = this.opts.now();
     this.sourceConnected = connected;
     this.stats.sourceConnected = connected;
@@ -305,9 +363,18 @@ export class Ingestor {
     for (const w of waiters) w();
   }
 
-  private enqueue(msg: Telemetry, ack?: () => void): void {
+  /** Removes a message source (an MQTT session that was closed on purpose). */
+  removeSource(source: string): void {
+    this.sources.delete(source);
+    const connected = [...this.sources.values()].every(Boolean);
+    if (connected && !this.sourceConnected && this.stats.consecutiveFailures === 0) this.healthySince = this.opts.now();
+    this.sourceConnected = connected;
+    this.stats.sourceConnected = connected;
+  }
+
+  private enqueue(msg: Telemetry, ack?: () => void, publishedAt?: number): void {
     if (this.closed) throw new Error("ingestor is closed");
-    this.pending.push({ msg, receivedAt: this.opts.now(), ack });
+    this.pending.push({ msg, receivedAt: this.opts.now(), ack, publishedAt });
     this.stats.pending = this.pending.length;
     if (this.pending.length > this.stats.queuePeak) this.stats.queuePeak = this.pending.length;
     if (this.pending.length >= this.opts.batchMaxSize) {
@@ -433,6 +500,17 @@ export class Ingestor {
         }
         for (const p of batch) p.ack?.();
       } catch (err) {
+        if (err instanceof Error && err.name === "FencedError") {
+          // This process lost some partitions. Nothing was written (the fence runs first in the
+          // transaction); the owner drops the lost partitions' messages, the rest goes again.
+          this.pending = batch.concat(this.pending);
+          for (const id of force) this.forceFlush.add(id);
+          this.stats.fenced++;
+          this.opts.log("warn", "batch fenced, partition lease lost", { error: err.message });
+          this.opts.onFenced?.(err as Error & { partitions: number[] });
+          if (!this.closed) this.schedule(0);
+          throw err;
+        }
         // In-memory state is unchanged. The transaction most likely rolled back, but if the failure
         // hit while COMMIT was in flight it may have committed: rebuild the batch's devices from the
         // database before the retry, which then sees its own rows as duplicates.
@@ -487,6 +565,11 @@ export class Ingestor {
     let inBatchDuplicates = batch.length - unique.length;
 
     const result = await this.db.transaction(async (tx) => {
+      if (this.opts.fence) {
+        const ids = new Set(unique.map((p) => p.msg.deviceId));
+        for (const id of force) ids.add(id);
+        await this.opts.fence(tx, ids);
+      }
       const fresh = await insertPoints(tx, unique);
       const working = new Map<string, DeviceRuntime>();
       const touch = (deviceId: string): DeviceRuntime => {
@@ -538,6 +621,7 @@ export class Ingestor {
     });
 
     for (const [id, w] of result.working) this.devices.set(id, w);
+    this.opts.onCommit?.(batch, Date.now());
     inBatchDuplicates += unique.length - result.fresh;
     this.stats.batches++;
     this.stats.stored += result.fresh;
