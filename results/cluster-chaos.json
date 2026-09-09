@@ -11,40 +11,40 @@
   "latePoints": 0,
   "referenceLatePoints": 0,
   "tripDifferencesFromSingleProcess": 0,
-  "leaseAcquisitions": 25,
+  "leaseAcquisitions": 26,
   "events": [
     {
       "step": "scale 1->3 rebalanced",
-      "ms": 362
+      "ms": 314
     },
     {
       "step": "pod kill + restart: all partitions owned",
-      "ms": 0
+      "ms": 729
     },
     {
       "step": "pod kill, no restart: leases expired and taken over",
-      "ms": 79
+      "ms": 0
     },
     {
       "step": "graceful stop: partitions handed over",
-      "ms": 594
+      "ms": 728
     },
     {
       "step": "scale 1->2 rebalanced",
-      "ms": 226
+      "ms": 302
     }
   ],
   "pods": [
     {
       "pod": "ingest-0",
       "owned": 0,
-      "members": 4,
+      "members": 3,
       "unowned": 0,
       "maxUnownedSeconds": 0,
-      "acquisitions": 8,
-      "releases": 8,
+      "acquisitions": 9,
+      "releases": 9,
       "losses": 0,
-      "devicesRebuilt": 0,
+      "devicesRebuilt": 3,
       "tickErrors": 0,
       "fenced": 0
     },
@@ -54,10 +54,10 @@
       "members": 3,
       "unowned": 0,
       "maxUnownedSeconds": 0,
-      "acquisitions": 2,
+      "acquisitions": 3,
       "releases": 0,
       "losses": 0,
-      "devicesRebuilt": 5,
+      "devicesRebuilt": 9,
       "tickErrors": 0,
       "fenced": 0
     },
@@ -67,10 +67,10 @@
       "members": 3,
       "unowned": 0,
       "maxUnownedSeconds": 0,
-      "acquisitions": 3,
+      "acquisitions": 2,
       "releases": 0,
       "losses": 0,
-      "devicesRebuilt": 9,
+      "devicesRebuilt": 5,
       "tickErrors": 0,
       "fenced": 0
     },
