@@ -19,7 +19,7 @@ export function createMetrics(sources: {
   coordinator?: () => CoordinatorStats;
 }): Metrics {
   const registry = new Registry();
-  collectDefaultMetrics({ register: registry, prefix: "fleet_process_" });
+  collectDefaultMetrics({ register: registry, prefix: "fleet_" });
 
   // A counter that follows a monotonically increasing total kept elsewhere.
   const mirror = (name: string, help: string, labelNames: string[], read: () => Record<string, number>) => {
