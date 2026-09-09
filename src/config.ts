@@ -22,6 +22,13 @@ export interface AppConfig {
   mqttReconnectMaxMs: number;
   shutdownTimeoutMs: number;
   webDist: string | null;
+  /** Number of topic partitions; 0 runs the single-instance `fleet/+/telemetry` subscription. */
+  partitions: number;
+  leaseTtlMs: number;
+  leaseRenewMs: number;
+  /** Pod identity (stable across restarts of a StatefulSet pod). */
+  podName: string;
+  mqttSessionExpiryS: number;
 }
 
 const num = (env: NodeJS.ProcessEnv, key: string, fallback: number): number => {
@@ -59,5 +66,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     mqttReconnectMaxMs: num(env, "MQTT_RECONNECT_MAX_MS", 5_000),
     shutdownTimeoutMs: num(env, "SHUTDOWN_TIMEOUT_MS", 10_000),
     webDist: env.WEB_DIST === "" ? null : (env.WEB_DIST ?? "web/dist"),
+    partitions: num(env, "PARTITIONS", 0),
+    leaseTtlMs: num(env, "LEASE_TTL_MS", 10_000),
+    leaseRenewMs: num(env, "LEASE_RENEW_MS", 2_000),
+    podName: env.POD_NAME ?? env.HOSTNAME ?? "ingest",
+    mqttSessionExpiryS: num(env, "MQTT_SESSION_EXPIRY_S", 86_400),
   };
 }

@@ -4,6 +4,10 @@ import { migrate } from "./db/schema.js";
 import { buildApi } from "./api/server.js";
 import { Ingestor } from "./ingest/ingestor.js";
 import { startSubscriber } from "./ingest/mqttSubscriber.js";
+import { randomUUID } from "node:crypto";
+import { PartitionCoordinator } from "./cluster/coordinator.js";
+import { LeaseStore, ownerId } from "./cluster/leases.js";
+import { createMetrics } from "./metrics.js";
 
 async function openDb(url: string, config: ReturnType<typeof loadConfig>): Promise<Db> {
   if (url === "pglite://memory") {
@@ -22,7 +26,13 @@ async function main(): Promise<void> {
   const db = await openDb(config.databaseUrl, config);
   await withRetry(() => migrate(db), log);
 
-  const ingestor = new Ingestor(db, {
+  const partitioned = config.partitions > 0;
+  let coordinator: PartitionCoordinator | null = null;
+  const metrics = createMetrics({
+    ingest: () => ingestor.stats,
+    coordinator: partitioned ? () => coordinator!.stats : undefined,
+  });
+  const ingestor: Ingestor = new Ingestor(db, {
     trip: config.trip,
     reorder: { windowMs: config.reorderWindowMs, maxBuffered: 500 },
     batchMaxSize: config.batchMaxSize,
@@ -31,27 +41,59 @@ async function main(): Promise<void> {
     maxPending: config.queueMax,
     retryDelayMs: config.retryDelayMs,
     retryMaxDelayMs: config.retryMaxDelayMs,
+    partitions: partitioned ? config.partitions : undefined,
+    fence: partitioned ? (tx, ids) => coordinator!.fence(tx, ids) : undefined,
+    onFenced: partitioned ? (err) => coordinator!.onFenced(err) : undefined,
+    onCommit: metrics.observeCommit,
     log,
   });
   // Not ready for messages until the subscriber is subscribed (reported in /api/stats).
   ingestor.setSourceConnected(false);
-  const recovered = await withRetry(() => ingestor.recover(), log);
-  log("info", "recovered device state by replay", { devices: recovered });
+  // Partitioned: devices are rebuilt per partition as leases are acquired, not all at startup.
+  if (!partitioned) {
+    const recovered = await withRetry(() => ingestor.recover(), log);
+    log("info", "recovered device state by replay", { devices: recovered });
+  }
   ingestor.start();
 
-  const api = await buildApi({ db, stats: () => ingestor.stats, webDist: config.webDist });
+  const api = await buildApi({
+    db,
+    stats: () => ingestor.stats,
+    webDist: config.webDist,
+    metrics: metrics.registry,
+    cluster: partitioned ? () => ({ ...coordinator!.stats, partitions: coordinator!.ownedPartitions() }) : undefined,
+  });
   await api.listen({ host: config.httpHost, port: config.httpPort });
   log("info", "http listening", { url: `http://${config.httpHost}:${config.httpPort}` });
 
-  const mqttClient = await startSubscriber(ingestor, {
-    url: config.mqttUrl,
-    topic: config.mqttTopic,
-    clientId: config.mqttClientId,
-    reconnectMinMs: config.mqttReconnectMinMs,
-    reconnectMaxMs: config.mqttReconnectMaxMs,
-    log,
-  });
-  log("info", "subscribed", { url: config.mqttUrl, topic: config.mqttTopic });
+  let mqttClient: { endAsync: () => Promise<unknown> } | null = null;
+  if (partitioned) {
+    const owner = ownerId(config.podName, randomUUID().slice(0, 8));
+    const store = new LeaseStore(db, owner, config.podName, config.leaseTtlMs);
+    coordinator = new PartitionCoordinator(ingestor, store, {
+      partitions: config.partitions,
+      leaseTtlMs: config.leaseTtlMs,
+      renewEveryMs: config.leaseRenewMs,
+      clientIdPrefix: config.mqttClientId,
+      mqttUrl: config.mqttUrl,
+      sessionExpiryS: config.mqttSessionExpiryS,
+      reconnectMinMs: config.mqttReconnectMinMs,
+      reconnectMaxMs: config.mqttReconnectMaxMs,
+      log,
+    });
+    await withRetry(() => coordinator!.start(), log);
+    log("info", "partition coordinator started", { owner, partitions: config.partitions, owned: coordinator.ownedPartitions() });
+  } else {
+    mqttClient = await startSubscriber(ingestor, {
+      url: config.mqttUrl,
+      topic: config.mqttTopic,
+      clientId: config.mqttClientId,
+      reconnectMinMs: config.mqttReconnectMinMs,
+      reconnectMaxMs: config.mqttReconnectMaxMs,
+      log,
+    });
+    log("info", "subscribed", { url: config.mqttUrl, topic: config.mqttTopic });
+  }
 
   let stopping = false;
   const shutdown = async (signal: string) => {
@@ -62,7 +104,9 @@ async function main(): Promise<void> {
     // Anything not committed in time was never acknowledged and stays with the broker.
     const result = await ingestor.shutdown(config.shutdownTimeoutMs);
     log(result.drained ? "info" : "error", "drained in-flight batches", result);
-    await mqttClient.endAsync().catch(() => undefined);
+    await mqttClient?.endAsync().catch(() => undefined);
+    // Hand the partitions back so other pods take them over without waiting for lease expiry.
+    await coordinator?.stop().catch(() => undefined);
     await api.close();
     await db.close().catch(() => undefined);
     process.exit(result.drained ? 0 : 1);

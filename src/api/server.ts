@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
+import type { Registry } from "prom-client";
 import { z } from "zod";
 import type { Db } from "../db/db.js";
 import type { IngestStats } from "../ingest/ingestor.js";
@@ -11,6 +12,10 @@ export interface ApiOptions {
   stats?: () => IngestStats;
   webDist?: string | null;
   logger?: boolean;
+  /** Prometheus registry served on GET /metrics. */
+  metrics?: Registry;
+  /** Partition ownership of this pod (partitioned mode), reported in /api/stats. */
+  cluster?: () => unknown;
 }
 
 const deviceParams = z.object({ deviceId: z.string().min(1).max(64) });
@@ -94,8 +99,17 @@ export async function buildApi(opts: ApiOptions): Promise<FastifyInstance> {
     return {
       stored: { devices: Number(r.devices), points: Number(r.points), trips: Number(r.trips), latePoints: Number(r.late) },
       ingest: opts.stats?.() ?? null,
+      ...(opts.cluster ? { cluster: opts.cluster() } : {}),
     };
   });
+
+  const registry = opts.metrics;
+  if (registry) {
+    app.get("/metrics", async (_req, reply) => {
+      reply.header("content-type", registry.contentType);
+      return registry.metrics();
+    });
+  }
 
   const listDevices = async (deviceId: string | null) => {
     const { rows } = await db.query<{
