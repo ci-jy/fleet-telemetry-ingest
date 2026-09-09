@@ -235,6 +235,21 @@ export class PartitionCoordinator {
     this.opts.log("info", "partition released", { partition: p, token: o.lease.token });
   }
 
+  /**
+   * Abrupt stop, as the rest of the cluster sees a crashed pod: no more renewals, every session
+   * closed without a clean DISCONNECT, leases left to expire (or to the pod's next incarnation).
+   */
+  halt(): void {
+    this.stopped = true;
+    if (this.timer) clearInterval(this.timer);
+    for (const [p, o] of [...this.owned]) {
+      o.client?.end(true);
+      this.ingestor.removeSource(`p${p}`);
+      this.owned.delete(p);
+    }
+    this.stats.owned = 0;
+  }
+
   /** Graceful stop, after the ingestor has drained: close every session and hand all leases back. */
   async stop(): Promise<void> {
     this.stopped = true;
