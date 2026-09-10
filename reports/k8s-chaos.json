@@ -1,0 +1,140 @@
+{
+  "generatedAt": "2026-10-04T22:51:37.564Z",
+  "config": {
+    "partitions": 16,
+    "replicas": 3,
+    "devices": 200,
+    "tripsPerDevice": 1,
+    "rate": 1500,
+    "seed": 7
+  },
+  "durationS": 173,
+  "totals": {
+    "sent": 248790,
+    "stored": 236809,
+    "lost": 0,
+    "duplicated": 0
+  },
+  "scenarios": [
+    {
+      "scenario": "pod-kill",
+      "devices": 200,
+      "sent": 63355,
+      "sentDistinct": 60329,
+      "simulatorDuplicates": 3026,
+      "stored": 60329,
+      "lost": 0,
+      "duplicated": 0,
+      "duplicateTrips": 0,
+      "phantom": 0,
+      "trips": 200,
+      "publishMs": 42274,
+      "faultStartedAfterMs": 8447,
+      "faultDurationMs": 8083,
+      "recoveryMs": 1530,
+      "completeAfterFaultMs": 26275,
+      "actions": [
+        "killed t-ingest-1",
+        "killed t-ingest-2",
+        "killed t-ingest-0"
+      ],
+      "errors": [],
+      "examples": [],
+      "ok": true
+    },
+    {
+      "scenario": "scale",
+      "devices": 200,
+      "sent": 61387,
+      "sentDistinct": 58376,
+      "simulatorDuplicates": 3011,
+      "stored": 58376,
+      "lost": 0,
+      "duplicated": 0,
+      "duplicateTrips": 0,
+      "phantom": 0,
+      "trips": 200,
+      "publishMs": 40963,
+      "faultStartedAfterMs": 8183,
+      "faultDurationMs": 14342,
+      "recoveryMs": 209,
+      "completeAfterFaultMs": 18973,
+      "actions": [
+        "scaled to 1 (ready after 510 ms)",
+        "scaled to 3 (ready after 3532 ms)",
+        "scaled to 2 (ready after 516 ms)"
+      ],
+      "errors": [],
+      "examples": [],
+      "ok": true
+    },
+    {
+      "scenario": "mosquitto-restart",
+      "devices": 200,
+      "sent": 60335,
+      "sentDistinct": 57478,
+      "simulatorDuplicates": 2857,
+      "stored": 57478,
+      "lost": 0,
+      "duplicated": 0,
+      "duplicateTrips": 0,
+      "phantom": 0,
+      "trips": 200,
+      "publishMs": 40263,
+      "faultStartedAfterMs": 8044,
+      "faultDurationMs": 3057,
+      "recoveryMs": 310,
+      "completeAfterFaultMs": 29701,
+      "actions": [
+        "deleted t-mosquitto-0 (graceful)",
+        "mosquitto ready again"
+      ],
+      "errors": [],
+      "examples": [],
+      "ok": true
+    },
+    {
+      "scenario": "postgres-restart",
+      "devices": 200,
+      "sent": 63713,
+      "sentDistinct": 60626,
+      "simulatorDuplicates": 3087,
+      "stored": 60626,
+      "lost": 0,
+      "duplicated": 0,
+      "duplicateTrips": 0,
+      "phantom": 0,
+      "trips": 200,
+      "publishMs": 42515,
+      "faultStartedAfterMs": 8494,
+      "faultDurationMs": 4576,
+      "recoveryMs": 120,
+      "completeAfterFaultMs": 29976,
+      "actions": [
+        "deleted t-postgres-0 (graceful)",
+        "postgres ready again"
+      ],
+      "errors": [],
+      "examples": [],
+      "ok": true
+    }
+  ],
+  "prometheus": {
+    "ingestPods": 3,
+    "targetsUp": 3,
+    "allScraped": true,
+    "alertRules": [
+      "FleetIngestLatencyP95High",
+      "FleetIngestConsumerLagging",
+      "FleetIngestErrorRatioHigh",
+      "FleetPartitionsUnowned",
+      "FleetIngestTargetDown"
+    ],
+    "messagesStored": 180259,
+    "p95PublishToCommitSeconds": 1.4963753160207949,
+    "leaseAcquisitions": 87
+  },
+  "ok": true,
+  "mode": "quick",
+  "wallClockS": 293
+}
