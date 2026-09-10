@@ -107,8 +107,14 @@ export async function startSubscriber(
   client.on("error", (err) => log("warn", "mqtt error", { error: err.message }));
 
   client.handleMessage = (packet, callback) => {
-    if (ingestor.isClosed) return; // shutting down: never acknowledged, so the broker redelivers it
     const id = packet.messageId;
+    if (ingestor.isClosed) {
+      // Shutting down: never acknowledged, so the broker redelivers it. The callback still runs (with
+      // its PUBACK suppressed) so mqtt.js keeps reading packets and a graceful end can complete.
+      if (packet.qos === 1 && id !== undefined) deferred.add(id);
+      callback();
+      return;
+    }
     let ack: (() => void) | undefined;
     if (packet.qos === 1 && id !== undefined) {
       deferred.add(id);

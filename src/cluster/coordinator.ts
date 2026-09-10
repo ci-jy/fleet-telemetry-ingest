@@ -256,7 +256,7 @@ export class PartitionCoordinator {
     if (this.timer) clearInterval(this.timer);
     await this.ticking;
     for (const [p, o] of [...this.owned]) {
-      await o.client?.endAsync().catch(() => undefined);
+      if (o.client) await endWithin(o.client, 2_000);
       await this.store.release(o.lease).catch(() => undefined);
       this.owned.delete(p);
       this.stats.releases++;
@@ -264,6 +264,15 @@ export class PartitionCoordinator {
     this.stats.owned = 0;
     await this.store.leaveMembership().catch(() => undefined);
   }
+}
+
+/** Clean DISCONNECT, but never wait longer than `ms`: then the connection is dropped. */
+async function endWithin(client: MqttClient, ms: number): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const timedOut = new Promise<boolean>((r) => (timer = setTimeout(() => r(true), ms)));
+  const ended = client.endAsync().then(() => false, () => false);
+  if (await Promise.race([ended, timedOut])) client.end(true);
+  clearTimeout(timer);
 }
 
 export { FencedError };
