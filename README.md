@@ -1,24 +1,39 @@
 # fleet-telemetry-ingest
 
-An MQTT ingestion service for vehicle telemetry that platform and backend engineers can scale out
-on Kubernetes: devices hash into 16 topic partitions owned through fenced Postgres leases, and in
-the multi-pod test 13,463 messages survive a scale-up, two pod crashes and a scale-down with
-0 lost, 0 duplicated and trips identical to a single-process run.
+An MQTT ingestion service that turns connected-vehicle GPS streams into trips and idle periods,
+for platform and backend engineers who must scale it out on Kubernetes without losing or
+duplicating a device message.
 
-| Check (committed test or script) | Faults | Messages | Lost | Duplicated | Result |
-| --- | --- | ---: | ---: | ---: | --- |
-| `test/cluster.integration.test.ts` (5 in-process pods, 8 partitions, [results/cluster-chaos.json](results/cluster-chaos.json)) | scale 1→3, kill + restart, kill without restart, graceful stop, scale 1→2 | 13,463 | 0 | 0 | trips identical to one uninterrupted ingestor; every handoff < 1 s |
-| `npm run test:chaos` (Docker Compose + Toxiproxy, [docs/RESILIENCE.md](docs/RESILIENCE.md)) | SIGKILL, SIGTERM, broker restart, DB restart, latency, DB partition × 5 seeds | ~7,000 per run | 0 | 0 | 30/30 runs pass, recovery ≤ 0.55 s |
-| `deploy/prometheus/rules.test.yaml` (promtool) | p95 latency, consumer lag, error ratio, unowned partitions, target down | – | – | – | every alert fires and stays quiet as specified |
-| `scripts/k8s-e2e.sh --quick` (k3d, 3 replicas, 200 devices) | pod kill every 4 s, scale 1→3→2, Mosquitto restart, Postgres restart | – | – | – | wired into `.github/workflows/k8s.yml`; not yet run to completion, see [Limitations](#limitations) |
+## Results
 
-Quickstart (Docker, k3d, Helm and kubectl installed):
+- **0 lost and 0 duplicated of 236,809 messages on Kubernetes** while ingest pods were killed
+  every 4 s, scaled 3→1→3→2, and the broker and database restarted (k3d, 3 replicas, 16
+  partitions; [reports/k8s-chaos.json](reports/k8s-chaos.json)).
+- **15,000 messages/s ingested with 51 ms p95 latency** from publish to stored row on one machine
+  ([PERFORMANCE.md](PERFORMANCE.md)).
+- **30 of 30 fault-injection runs passed** (crash, graceful stop, broker and database restart,
+  latency, database partition × 5 seeds): 0 lost, 0 duplicated, trips identical to a fault-free
+  run, recovery within 0.6 s ([docs/RESILIENCE.md](docs/RESILIENCE.md)).
+- **99.2% of 4,000 trips within 1% of ground-truth distance** across 20 seeded fleets with drops,
+  duplicates, reordering and outages ([PERFORMANCE.md](PERFORMANCE.md)).
+
+![Recovery time per injected fault, with lost and duplicated counts](docs/chaos-recovery.png)
+
+**Stack:** TypeScript, Node.js, MQTT 5 (Mosquitto, mqtt.js), PostgreSQL, Kubernetes (k3d, k3s),
+Helm, Prometheus (prom-client, promtool), Grafana, Docker Compose, Toxiproxy, GitHub Actions,
+Vitest, k6, React, Vite, Fastify, Python (matplotlib)
+
+## Quickstart
+
+Needs Node.js 20+, Docker, k3d, Helm and kubectl.
 
 ```bash
-npm ci && npm test                      # unit, integration and multi-pod handoff tests (no Docker needed)
-bash scripts/k8s-e2e.sh --quick --keep  # k3d cluster + Helm chart + in-cluster chaos Job -> reports/k8s-chaos.json
-kubectl -n fleet port-forward svc/t-prometheus 29090:9090   # metrics and alerts on http://127.0.0.1:29090
+npm ci && npm test                 # unit, integration and multi-pod handoff tests (no Docker needed)
+bash scripts/k8s-e2e.sh --quick    # k3d cluster + Helm chart + 200-vehicle chaos replay -> reports/k8s-chaos.json
+python3 scripts/plot-results.py    # redraw docs/chaos-recovery.png from the reports
 ```
+
+## How it works
 
 Devices publish GPS and status messages to a Mosquitto broker. The service validates each
 message and stores the raw track in PostgreSQL. A replayable per-device state machine turns the
@@ -45,6 +60,16 @@ The repository also contains:
 
 Measured numbers are in [PERFORMANCE.md](PERFORMANCE.md) (throughput, latency, accuracy) and
 [docs/RESILIENCE.md](docs/RESILIENCE.md) (fault scenarios, recovery times, queue depth).
+
+## Results in detail
+
+| Check (committed test or script) | Faults | Messages (distinct) | Lost | Duplicated | Result |
+| --- | --- | ---: | ---: | ---: | --- |
+| `scripts/k8s-e2e.sh --quick` (k3d, 3 replicas, 16 partitions, 200 devices, [reports/k8s-chaos.json](reports/k8s-chaos.json)) | pod kill every 4 s, scale 3→1→3→2, Mosquitto restart, Postgres restart | 236,809 | 0 | 0 | recovery 0.1–1.5 s per scenario; Prometheus scraped 3/3 pods |
+| `test/cluster.integration.test.ts` (5 in-process pods, 8 partitions, [results/cluster-chaos.json](results/cluster-chaos.json)) | scale 1→3, kill + restart, kill without restart, graceful stop, scale 1→2 | 13,463 | 0 | 0 | trips identical to one uninterrupted ingestor; every handoff < 1 s |
+| `npm run test:chaos` (Docker Compose + Toxiproxy, [docs/RESILIENCE.md](docs/RESILIENCE.md)) | SIGKILL, SIGTERM, broker restart, DB restart, latency, DB partition × 5 seeds | ~7,000 per run | 0 | 0 | 30/30 runs pass, trips identical to a fault-free run |
+| `deploy/prometheus/rules.test.yaml` (promtool) | p95 latency, consumer lag, error ratio, unowned partitions, target down | – | – | – | every alert fires and stays quiet as specified |
+| `scripts/mqtt-load.ts` ([PERFORMANCE.md](PERFORMANCE.md)) | none; offered 1,000–25,000 msg/s | up to 750,000 | 0 | 0 | keeps up to 20,000 msg/s; p95 51 ms at 15,000 msg/s |
 
 ## Architecture
 
@@ -99,7 +124,7 @@ Source layout:
 | `deploy/prometheus/`, `deploy/grafana/` | Alert rules with promtool tests, Grafana dashboard |
 | `scripts/k8s-e2e.sh` | k3d chaos suite |
 | `src/chaos/` | Fault-injection harness: Docker and Toxiproxy control, scenarios, runner, invariant checker, results report |
-| `scripts/` | `simulate.ts`, `mqtt-load.ts`, `accuracy.ts`, `chaos-matrix.ts` |
+| `scripts/` | `simulate.ts`, `mqtt-load.ts`, `accuracy.ts`, `chaos-matrix.ts`, `plot-results.py` (README figure; `requirements-docs.txt`) |
 | `load/k6-api.js` | k6 API load test |
 | `web/` | React + Vite page |
 | `test/` | Vitest unit and integration tests |
@@ -246,6 +271,21 @@ Prometheus has an `up` target for every ingest pod and that the alert rules are 
 writes `reports/k8s-chaos.json` (sent, stored, lost and duplicated counts plus recovery time per
 scenario) and exits non-zero on any loss, duplicate or unscraped pod.
 `.github/workflows/k8s.yml` runs the same script after the static checks and uploads the report.
+
+Measured with `--quick` (3 replicas, 16 partitions, 200 vehicles, 1500 msg/s, seed 7; the whole
+script took 293 s including cluster creation, inside a 3 GB node limit):
+
+| Scenario | Sent | Distinct | Stored | Lost | Duplicated | Recovery |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `pod-kill` (3 kills, 4 s apart) | 63,355 | 60,329 | 60,329 | 0 | 0 | 1.5 s |
+| `scale` 3 → 1 → 3 → 2 | 61,387 | 58,376 | 58,376 | 0 | 0 | 0.2 s |
+| `mosquitto-restart` | 60,335 | 57,478 | 57,478 | 0 | 0 | 0.3 s |
+| `postgres-restart` | 63,713 | 60,626 | 60,626 | 0 | 0 | 0.1 s |
+| **total** | 248,790 | 236,809 | 236,809 | 0 | 0 | |
+
+"Sent" includes the simulator's deliberate duplicates. Prometheus had an `up` target for 3 of 3
+ingest pods with all 5 alert rules loaded, and reported a p95 publish-to-commit latency of 1.5 s
+over the run (the chaos replay publishes faster than real time and pauses during faults).
 
 ## Message format
 
@@ -594,7 +634,7 @@ polyline through all the positions the device reported.
   tested against a real Postgres engine without external services. The production adapter uses
   node-postgres with `int8` mapped to numbers.
 
-## Limitations
+## Limitations and next steps
 
 - **Distance across dropouts.** Across a dropout or outage, distance is the straight-line chord
   between the last point before and the first point after. On a curvy road this underestimates.
@@ -621,18 +661,15 @@ polyline through all the positions the device reported.
 - **Fault-injection scale.** Each run is a fleet of 8 vehicles with 3 trips each (about 7 000
   deliveries) on one machine, with one fault per run. The scenarios do not cover disk-full
   conditions, clock skew or several faults at once.
-- **k3d chaos results not recorded here.** The development host is itself a nested container.
-  There, Docker's runc cannot start containers with their own network namespace, which is also
-  why the Compose suite uses host networking. `scripts/k8s-e2e.sh` detects this and falls back to
-  a private dockerd for the cluster: its own socket and data directory, the crun runtime, no
-  iptables changes, and k3s system images from the airgap bundle. Here this gets the k3d cluster
-  running, along with the ingest pods, PostgreSQL and Prometheus. Mosquitto then fails inside the
-  nested node: its shared libraries cannot be loaded ("RELRO protection failed" with the Alpine
-  image; "cannot change memory protections" with a Debian build). The Job therefore never runs, and
-  no `reports/k8s-chaos.json` is committed. On standard Docker hosts, such as GitHub's
-  `ubuntu-latest` runners in `.github/workflows/k8s.yml`, the fallback is not used. The partition,
-  lease and handoff logic is covered in process by `test/cluster.integration.test.ts` and
-  `test/leases.test.ts`.
+- **Nested hosts need workarounds.** On a host that is itself a container, Docker's runc cannot
+  start containers with their own network namespace. `scripts/k8s-e2e.sh` detects this and runs
+  the cluster on a private dockerd (crun, no iptables changes, k3s images from the airgap bundle,
+  the native snapshotter). Such a host's AppArmor profile for `/usr/sbin/mosquitto` also confines
+  the broker inside the node and denies it its config file, so there the script runs a copy of the
+  binary through `mosquitto.command`. The measured results above come from that setup. On
+  standard Docker hosts, such as GitHub's `ubuntu-latest` runners, none of this is used.
+- **One chaos seed per run.** The k3d suite runs each scenario once per invocation with a fixed
+  seed and one fault type at a time; the quick run kills 3 pods, the full run 6.
 - **Handoffs during fast replay.** After a handoff the broker redelivers the old owner's
   unacknowledged messages, which can then arrive behind newer ones. In real time that delay is far
   inside the 30 s reorder window. A replay compressed 30-40× (as in the chaos runs) can push it
@@ -648,6 +685,10 @@ polyline through all the positions the device reported.
   sequence numbers. Resetting `seq` (for example after a factory reset) needs a new device id.
 - **Out of scope:** authentication, multi-tenancy, managed cloud Kubernetes, database
   replication, autoscaling on custom metrics, alert routing to real receivers, map matching or routing, and real vehicle data.
+
+Next steps, in order: run the k3d suite over several seeds in CI and keep the reports as a trend;
+combine faults (a pod kill during a broker restart); add live re-partitioning by draining
+partitions under a new count; and balance partitions by measured message rate instead of count.
 
 ## License
 
