@@ -680,7 +680,7 @@ polyline through all the positions the device reported.
   hung past its 120 s limit; it normally finishes in about 5 s. The likely cause was fixed: the
   subscriber stopped reading packets once its ingestor was closed, which could stall a graceful
   disconnect, and that disconnect now has a 2 s bound. The hang never reproduced locally, before or
-  after the fix (36 runs, some under parallel load).
+  after the fix (over 60 runs, many of them under parallel load).
 - **Fixed partition count.** Changing `PARTITIONS` re-maps devices to partitions. That needs a
   stop-the-world migration (drain, then restart every pod with the new count); there is no live
   re-partitioning.
