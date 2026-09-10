@@ -30,7 +30,7 @@ def k8s_rows():
     rows = []
     for s in report["scenarios"]:
         rows.append({
-            "label": f"k8s: {s['scenario']} ({replicas} pods)",
+            "label": f"Kubernetes, {replicas} pods: {s['scenario']}",
             "recovery": (s.get("recoveryMs") or 0) / 1000,
             "sent": s.get("sentDistinct", s.get("sent", 0)),
             "lost": s.get("lost", 0),
@@ -48,7 +48,7 @@ def compose_rows():
         if not runs:
             continue
         rows.append({
-            "label": f"compose: {runs[0]['scenario']} (median of {len(runs)})",
+            "label": f"Compose, 1 process: {runs[0]['scenario']} (median of {len(runs)})",
             "recovery": statistics.median(r["recoveryMs"] for r in runs) / 1000,
             "sent": sum(r["expected"] for r in runs),
             "lost": sum(r["lost"] for r in runs),
