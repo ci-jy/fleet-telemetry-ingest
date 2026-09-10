@@ -4,3 +4,5 @@ web/dist/
 *.log
 .env
 results/tmp/
+.cache/
+reports/k8s-logs/

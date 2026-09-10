@@ -621,13 +621,18 @@ polyline through all the positions the device reported.
 - **Fault-injection scale.** Each run is a fleet of 8 vehicles with 3 trips each (about 7 000
   deliveries) on one machine, with one fault per run. The scenarios do not cover disk-full
   conditions, clock skew or several faults at once.
-- **k3d chaos results not recorded here.** On the development host,
-  Docker cannot start containers with their own network namespace (the host is itself a nested
-  container, which is also why the Compose suite uses host networking). k3d nodes therefore
-  cannot start, and `scripts/k8s-e2e.sh` exits non-zero. No `reports/k8s-chaos.json` is
-  committed. The script and `.github/workflows/k8s.yml` target standard Docker hosts such as
-  GitHub's `ubuntu-latest` runners. The partition, lease and handoff logic is covered in process
-  by `test/cluster.integration.test.ts` and `test/leases.test.ts`.
+- **k3d chaos results not recorded here.** The development host is itself a nested container.
+  There, Docker's runc cannot start containers with their own network namespace, which is also
+  why the Compose suite uses host networking. `scripts/k8s-e2e.sh` detects this and falls back to
+  a private dockerd for the cluster: its own socket and data directory, the crun runtime, no
+  iptables changes, and k3s system images from the airgap bundle. Here this gets the k3d cluster
+  running, along with the ingest pods, PostgreSQL and Prometheus. Mosquitto then fails inside the
+  nested node: its shared libraries cannot be loaded ("RELRO protection failed" with the Alpine
+  image; "cannot change memory protections" with a Debian build). The Job therefore never runs, and
+  no `reports/k8s-chaos.json` is committed. On standard Docker hosts, such as GitHub's
+  `ubuntu-latest` runners in `.github/workflows/k8s.yml`, the fallback is not used. The partition,
+  lease and handoff logic is covered in process by `test/cluster.integration.test.ts` and
+  `test/leases.test.ts`.
 - **Handoffs during fast replay.** After a handoff the broker redelivers the old owner's
   unacknowledged messages, which can then arrive behind newer ones. In real time that delay is far
   inside the 30 s reorder window. A replay compressed 30-40× (as in the chaos runs) can push it

@@ -49,6 +49,68 @@ done
 WORK=$(mktemp -d)
 export KUBECONFIG="$WORK/kubeconfig"
 KUBECTL=(kubectl -n "$NAMESPACE")
+K3S_IMAGE=rancher/k3s:v1.31.5-k3s1
+K3S_EXTRA=()
+HOST_DOCKER=("${DOCKER[@]}")
+PRIVATE_DOCKERD=""
+
+# Nested hosts (a Kubernetes node or system container running Docker) may refuse containers with
+# their own network namespace: runc cannot write the sysctls Docker sets for them. In that case
+# run a private dockerd for the cluster only: its own socket and data directory, the crun runtime
+# (which can write those sysctls), and no iptables changes on the host. Without NAT the node has
+# no internet access, so k3s loads its system images from the airgap bundle and every workload
+# image is imported. The kubelet and kube-proxy get the settings k3s needs inside a container
+# without /dev/kmsg, conntrack sysctls or br_netfilter.
+start_private_dockerd() {
+  command -v crun >/dev/null || { echo "nested host detected but crun is not installed (apt-get install crun)" >&2; exit 2; }
+  PRIVATE_DOCKERD=$(mktemp -d /tmp/fleet-k3d-dockerd.XXXXXX)
+  local sock="unix://$PRIVATE_DOCKERD/docker.sock"
+  log "default Docker runtime cannot start containers here; starting a private dockerd (crun) on $sock"
+  sudo -n bash -c "nohup dockerd --data-root '$PRIVATE_DOCKERD/data' --exec-root '$PRIVATE_DOCKERD/exec' \
+    --pidfile '$PRIVATE_DOCKERD/dockerd.pid' -H '$sock' \
+    --add-runtime crun=$(command -v crun) --default-runtime crun \
+    --iptables=false --ip6tables=false --ip-masq=false --bridge=none \
+    --host-gateway-ip 10.255.255.254 --exec-opt native.cgroupdriver=cgroupfs \
+    --feature containerd-snapshotter=false \
+    > '$PRIVATE_DOCKERD/dockerd.log' 2>&1 &"
+  DOCKER=(sudo -n docker -H "$sock")
+  K3D=(sudo -n env "DOCKER_HOST=$sock" "DOCKER_SOCK=$PRIVATE_DOCKERD/docker.sock" k3d)
+  for _ in $(seq 1 60); do "${DOCKER[@]}" info >/dev/null 2>&1 && break; sleep 0.5; done
+  "${DOCKER[@]}" info >/dev/null 2>&1 || { cat "$PRIVATE_DOCKERD/dockerd.log" >&2; exit 1; }
+  local airgap="$ROOT/.cache/k3s-airgap"
+  if [[ ! -s "$airgap/k3s-airgap-images-amd64.tar.zst" ]]; then
+    log "downloading the k3s airgap image bundle"
+    mkdir -p "$airgap"
+    curl -fsSL -o "$airgap/k3s-airgap-images-amd64.tar.zst.part" \
+      "https://github.com/k3s-io/k3s/releases/download/v1.31.5%2Bk3s1/k3s-airgap-images-amd64.tar.zst"
+    mv "$airgap/k3s-airgap-images-amd64.tar.zst.part" "$airgap/k3s-airgap-images-amd64.tar.zst"
+  fi
+  K3S_EXTRA=(
+    -v "$airgap:/var/lib/rancher/k3s/agent/images@server:0"
+    --k3s-arg "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:0"
+    --k3s-arg "--kube-proxy-arg=conntrack-max-per-core=0@server:0"
+    --k3s-arg "--kube-proxy-arg=masquerade-all=true@server:0"
+  )
+  # Reuse images the host daemon already has instead of pulling them again.
+  for img in "$K3S_IMAGE" ghcr.io/k3d-io/k3d-tools:5.8.3 ghcr.io/k3d-io/k3d-proxy:5.8.3; do
+    if "${HOST_DOCKER[@]}" image inspect "$img" >/dev/null 2>&1; then
+      "${HOST_DOCKER[@]}" save "$img" | "${DOCKER[@]}" load -q >/dev/null
+    fi
+  done
+}
+
+stop_private_dockerd() {
+  [[ -n $PRIVATE_DOCKERD ]] || return 0
+  if [[ -f "$PRIVATE_DOCKERD/dockerd.pid" ]]; then
+    local pid
+    pid=$(cat "$PRIVATE_DOCKERD/dockerd.pid")
+    sudo -n kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 60); do sudo -n kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
+  fi
+  # Bind mounts of a daemon that died uncleanly would keep the directory busy.
+  awk -v d="$PRIVATE_DOCKERD/" 'index($2, d) == 1 {print $2}' /proc/mounts | sort -r | xargs -r sudo -n umount 2>/dev/null || true
+  sudo -n rm -rf "$PRIVATE_DOCKERD" || true
+}
 
 cleanup() {
   local code=$?
@@ -63,6 +125,7 @@ cleanup() {
   if [[ $KEEP != 1 ]]; then
     log "deleting cluster $CLUSTER"
     "${K3D[@]}" cluster delete "$CLUSTER" >/dev/null 2>&1 || true
+    stop_private_dockerd
   else
     log "cluster kept: export KUBECONFIG=\$(k3d kubeconfig write $CLUSTER)"
   fi
@@ -72,6 +135,10 @@ cleanup() {
 trap cleanup EXIT
 
 started=$(date +%s)
+"${DOCKER[@]}" image inspect "$K3S_IMAGE" >/dev/null 2>&1 || "${DOCKER[@]}" pull -q "$K3S_IMAGE" >/dev/null
+if ! "${DOCKER[@]}" run --rm --entrypoint /bin/sh "$K3S_IMAGE" -c true >/dev/null 2>&1; then
+  start_private_dockerd
+fi
 if "${K3D[@]}" cluster list "$CLUSTER" >/dev/null 2>&1; then
   if [[ $REUSE != 1 ]]; then
     log "cluster $CLUSTER exists; deleting it (use --reuse to keep it)"
@@ -80,7 +147,7 @@ if "${K3D[@]}" cluster list "$CLUSTER" >/dev/null 2>&1; then
 fi
 if ! "${K3D[@]}" cluster list "$CLUSTER" >/dev/null 2>&1; then
   log "creating k3d cluster $CLUSTER (API on 127.0.0.1:$API_PORT)"
-  if ! "${K3D[@]}" cluster create "$CLUSTER" --servers 1 --agents 0 --no-lb \
+  if ! "${K3D[@]}" cluster create "$CLUSTER" --servers 1 --agents 0 --no-lb --image "$K3S_IMAGE" "${K3S_EXTRA[@]}" \
     --api-port "127.0.0.1:$API_PORT" \
     --k3s-arg "--disable=traefik@server:0" \
     --wait --timeout 180s; then
@@ -92,14 +159,19 @@ fi
 "${K3D[@]}" kubeconfig get "$CLUSTER" > "$KUBECONFIG"
 
 log "building $IMAGE"
-"${DOCKER[@]}" build -q -t "$IMAGE" . >/dev/null
+# Host networking for RUN steps: on nested hosts the builder cannot create network namespaces either.
+"${HOST_DOCKER[@]}" build --network host -q -t "$IMAGE" . >/dev/null
+if [[ -n $PRIVATE_DOCKERD ]]; then "${HOST_DOCKER[@]}" save "$IMAGE" | "${DOCKER[@]}" load -q >/dev/null; fi
 images=("$IMAGE")
 # Pre-load the third-party images when they are available locally (saves pulls inside the node).
 for img in postgres:16-alpine eclipse-mosquitto:2 prom/prometheus:v2.55.1; do
+  if [[ -n $PRIVATE_DOCKERD ]] && "${HOST_DOCKER[@]}" image inspect "$img" >/dev/null 2>&1; then
+    "${HOST_DOCKER[@]}" save "$img" | "${DOCKER[@]}" load -q >/dev/null
+  fi
   if "${DOCKER[@]}" image inspect "$img" >/dev/null 2>&1 || "${DOCKER[@]}" pull -q "$img" >/dev/null 2>&1; then images+=("$img"); fi
 done
 log "importing images: ${images[*]}"
-"${K3D[@]}" image import -c "$CLUSTER" "${images[@]}" >/dev/null
+"${K3D[@]}" image import --mode direct -c "$CLUSTER" "${images[@]}" >/dev/null
 
 log "installing chart (values-ci.yaml)"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
