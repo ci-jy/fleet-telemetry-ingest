@@ -51,8 +51,10 @@ export KUBECONFIG="$WORK/kubeconfig"
 KUBECTL=(kubectl -n "$NAMESPACE")
 K3S_IMAGE=rancher/k3s:v1.31.5-k3s1
 K3S_EXTRA=()
+HELM_EXTRA=()
 HOST_DOCKER=("${DOCKER[@]}")
 PRIVATE_DOCKERD=""
+PRIVATE_EXEC=""
 
 # Nested hosts (a Kubernetes node or system container running Docker) may refuse containers with
 # their own network namespace: runc cannot write the sysctls Docker sets for them. In that case
@@ -63,10 +65,13 @@ PRIVATE_DOCKERD=""
 # without /dev/kmsg, conntrack sysctls or br_netfilter.
 start_private_dockerd() {
   command -v crun >/dev/null || { echo "nested host detected but crun is not installed (apt-get install crun)" >&2; exit 2; }
-  PRIVATE_DOCKERD=$(mktemp -d /tmp/fleet-k3d-dockerd.XXXXXX)
-  local sock="unix://$PRIVATE_DOCKERD/docker.sock"
+  PRIVATE_DOCKERD=$(mktemp -d "${TMPDIR:-/tmp}/fleet-k3d-dockerd.XXXXXX")
+  # Unix socket paths are limited to 108 bytes, so sockets live under a short path; data stays on disk.
+  PRIVATE_EXEC=/run/fleet-k3d-${PRIVATE_DOCKERD##*.}
+  sudo -n mkdir -p "$PRIVATE_EXEC"
+  local sock="unix://$PRIVATE_EXEC/docker.sock"
   log "default Docker runtime cannot start containers here; starting a private dockerd (crun) on $sock"
-  sudo -n bash -c "nohup dockerd --data-root '$PRIVATE_DOCKERD/data' --exec-root '$PRIVATE_DOCKERD/exec' \
+  sudo -n bash -c "nohup dockerd --data-root '$PRIVATE_DOCKERD/data' --exec-root '$PRIVATE_EXEC/exec' \
     --pidfile '$PRIVATE_DOCKERD/dockerd.pid' -H '$sock' \
     --add-runtime crun=$(command -v crun) --default-runtime crun \
     --iptables=false --ip6tables=false --ip-masq=false --bridge=none \
@@ -74,7 +79,7 @@ start_private_dockerd() {
     --feature containerd-snapshotter=false \
     > '$PRIVATE_DOCKERD/dockerd.log' 2>&1 &"
   DOCKER=(sudo -n docker -H "$sock")
-  K3D=(sudo -n env "DOCKER_HOST=$sock" "DOCKER_SOCK=$PRIVATE_DOCKERD/docker.sock" k3d)
+  K3D=(sudo -n env "DOCKER_HOST=$sock" "DOCKER_SOCK=$PRIVATE_EXEC/docker.sock" k3d)
   for _ in $(seq 1 60); do "${DOCKER[@]}" info >/dev/null 2>&1 && break; sleep 0.5; done
   "${DOCKER[@]}" info >/dev/null 2>&1 || { cat "$PRIVATE_DOCKERD/dockerd.log" >&2; exit 1; }
   local airgap="$ROOT/.cache/k3s-airgap"
@@ -90,7 +95,12 @@ start_private_dockerd() {
     --k3s-arg "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:0"
     --k3s-arg "--kube-proxy-arg=conntrack-max-per-core=0@server:0"
     --k3s-arg "--kube-proxy-arg=masquerade-all=true@server:0"
+    # overlayfs inside the nested node breaks memory protection of some mapped libraries.
+    --k3s-arg "--snapshotter=native@server:0"
   )
+  # The host's AppArmor profile for /usr/sbin/mosquitto attaches by path inside the nested node too
+  # and denies the broker its config file; run a copy of the binary from another path.
+  HELM_EXTRA=(--set-json 'mosquitto.command=["sh","-c","cp /usr/sbin/mosquitto /tmp/mosquitto-broker && exec /tmp/mosquitto-broker -c /mosquitto/config/mosquitto.conf"]')
   # Reuse images the host daemon already has instead of pulling them again.
   for img in "$K3S_IMAGE" ghcr.io/k3d-io/k3d-tools:5.8.3 ghcr.io/k3d-io/k3d-proxy:5.8.3; do
     if "${HOST_DOCKER[@]}" image inspect "$img" >/dev/null 2>&1; then
@@ -108,8 +118,10 @@ stop_private_dockerd() {
     for _ in $(seq 1 60); do sudo -n kill -0 "$pid" 2>/dev/null || break; sleep 0.5; done
   fi
   # Bind mounts of a daemon that died uncleanly would keep the directory busy.
-  awk -v d="$PRIVATE_DOCKERD/" 'index($2, d) == 1 {print $2}' /proc/mounts | sort -r | xargs -r sudo -n umount 2>/dev/null || true
-  sudo -n rm -rf "$PRIVATE_DOCKERD" || true
+  for d in "$PRIVATE_DOCKERD" "$PRIVATE_EXEC"; do
+    awk -v d="$d/" 'index($2, d) == 1 {print $2}' /proc/mounts | sort -r | xargs -r sudo -n umount 2>/dev/null || true
+    sudo -n rm -rf "$d" || true
+  done
 }
 
 cleanup() {
@@ -147,7 +159,7 @@ if "${K3D[@]}" cluster list "$CLUSTER" >/dev/null 2>&1; then
 fi
 if ! "${K3D[@]}" cluster list "$CLUSTER" >/dev/null 2>&1; then
   log "creating k3d cluster $CLUSTER (API on 127.0.0.1:$API_PORT)"
-  if ! "${K3D[@]}" cluster create "$CLUSTER" --servers 1 --agents 0 --no-lb --image "$K3S_IMAGE" "${K3S_EXTRA[@]}" \
+  if ! "${K3D[@]}" cluster create "$CLUSTER" --servers 1 --agents 0 --no-lb --servers-memory "${K8S_E2E_NODE_MEMORY:-3g}" --image "$K3S_IMAGE" "${K3S_EXTRA[@]}" \
     --api-port "127.0.0.1:$API_PORT" \
     --k3s-arg "--disable=traefik@server:0" \
     --wait --timeout 180s; then
@@ -176,7 +188,7 @@ log "importing images: ${images[*]}"
 log "installing chart (values-ci.yaml)"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 helm upgrade --install "$RELEASE" charts/telemetry -n "$NAMESPACE" -f charts/telemetry/values-ci.yaml \
-  --wait --timeout 6m
+  "${HELM_EXTRA[@]}" --wait --timeout 6m
 "${KUBECTL[@]}" get pods -o wide
 
 log "starting the e2e runner Job ($E2E_SET)"

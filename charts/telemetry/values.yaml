@@ -39,6 +39,9 @@ postgres:
 
 mosquitto:
   image: eclipse-mosquitto:2
+  # Optional command override; empty runs the image default. Hosts whose AppArmor profile for
+  # /usr/sbin/mosquitto also confines nested containers can run a copy of the binary instead.
+  command: []
   storage: 512Mi
   # Mosquitto writes its persistence file on shutdown and at this interval.
   autosaveIntervalSeconds: 5

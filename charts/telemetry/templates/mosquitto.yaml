@@ -13,9 +13,9 @@ data:
     allow_anonymous true
     persistence true
     persistence_location /mosquitto/data/
-    autosave_interval {{ .Values.mosquitto.autosaveIntervalSeconds }}
-    max_queued_messages {{ .Values.mosquitto.maxQueuedMessages }}
-    max_inflight_messages {{ .Values.mosquitto.maxInflightMessages }}
+    autosave_interval {{ .Values.mosquitto.autosaveIntervalSeconds | int }}
+    max_queued_messages {{ .Values.mosquitto.maxQueuedMessages | int }}
+    max_inflight_messages {{ .Values.mosquitto.maxInflightMessages | int }}
     log_dest stdout
     log_type error
     log_type warning
@@ -61,6 +61,9 @@ spec:
       containers:
         - name: mosquitto
           image: {{ .Values.mosquitto.image }}
+          {{- with .Values.mosquitto.command }}
+          command: {{ toJson . }}
+          {{- end }}
           ports:
             - { name: mqtt, containerPort: 1883 }
           readinessProbe:
