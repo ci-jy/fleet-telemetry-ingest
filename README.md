@@ -124,7 +124,7 @@ Source layout:
 | `deploy/prometheus/`, `deploy/grafana/` | Alert rules with promtool tests, Grafana dashboard |
 | `scripts/k8s-e2e.sh` | k3d chaos suite |
 | `src/chaos/` | Fault-injection harness: Docker and Toxiproxy control, scenarios, runner, invariant checker, results report |
-| `scripts/` | `simulate.ts`, `mqtt-load.ts`, `accuracy.ts`, `chaos-matrix.ts`, `plot-results.py` (README figure; `requirements-docs.txt`) |
+| `scripts/` | `simulate.ts`, `mqtt-load.ts`, `accuracy.ts`, `chaos-matrix.ts`, `plot-results.py` (README figure), `check-grafana.sh`, `k8s-e2e.sh` (Python packages in `requirements-docs.txt`) |
 | `load/k6-api.js` | k6 API load test |
 | `web/` | React + Vite page |
 | `test/` | Vitest unit and integration tests |
@@ -235,6 +235,9 @@ depth, owned partitions, lease handoffs, dedupe rejections and unowned time. The
 both through `charts/telemetry/files/`, which holds symlinks to `deploy/`. The dashboard ships as a
 ConfigMap; set `grafana.enabled=true` to also run a provisioned Grafana pod (off in CI to save
 memory).
+`scripts/check-grafana.sh` renders the chart with Grafana enabled, starts the same Grafana image
+in Docker with the rendered provisioning and dashboard ConfigMaps, and checks through Grafana's
+HTTP API that the Prometheus datasource and the dashboard, with all its panels, were loaded.
 
 ### Run it locally
 
