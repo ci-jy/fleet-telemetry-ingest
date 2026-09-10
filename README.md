@@ -695,4 +695,4 @@ partitions under a new count; and balance partitions by measured message rate in
 MIT. Third-party packages are used as npm dependencies under their own licenses. No third-party
 source code is vendored.
 
-Project period: 2026-05-04 to 2026-06-05.
+Project period: 2026-05-04 to 2026-09-11.

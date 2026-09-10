@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T22:51:37.564Z",
+  "generatedAt": "2026-10-04T23:09:01.844Z",
   "config": {
     "partitions": 16,
     "replicas": 3,
@@ -8,7 +8,7 @@
     "rate": 1500,
     "seed": 7
   },
-  "durationS": 173,
+  "durationS": 174,
   "totals": {
     "sent": 248790,
     "stored": 236809,
@@ -28,11 +28,11 @@
       "duplicateTrips": 0,
       "phantom": 0,
       "trips": 200,
-      "publishMs": 42274,
-      "faultStartedAfterMs": 8447,
-      "faultDurationMs": 8083,
-      "recoveryMs": 1530,
-      "completeAfterFaultMs": 26275,
+      "publishMs": 42277,
+      "faultStartedAfterMs": 8446,
+      "faultDurationMs": 8079,
+      "recoveryMs": 1710,
+      "completeAfterFaultMs": 26276,
       "actions": [
         "killed t-ingest-1",
         "killed t-ingest-2",
@@ -54,15 +54,15 @@
       "duplicateTrips": 0,
       "phantom": 0,
       "trips": 200,
-      "publishMs": 40963,
-      "faultStartedAfterMs": 8183,
-      "faultDurationMs": 14342,
-      "recoveryMs": 209,
-      "completeAfterFaultMs": 18973,
+      "publishMs": 40965,
+      "faultStartedAfterMs": 8184,
+      "faultDurationMs": 13854,
+      "recoveryMs": 701,
+      "completeAfterFaultMs": 19458,
       "actions": [
-        "scaled to 1 (ready after 510 ms)",
-        "scaled to 3 (ready after 3532 ms)",
-        "scaled to 2 (ready after 516 ms)"
+        "scaled to 1 (ready after 518 ms)",
+        "scaled to 3 (ready after 3032 ms)",
+        "scaled to 2 (ready after 518 ms)"
       ],
       "errors": [],
       "examples": [],
@@ -80,11 +80,11 @@
       "duplicateTrips": 0,
       "phantom": 0,
       "trips": 200,
-      "publishMs": 40263,
-      "faultStartedAfterMs": 8044,
-      "faultDurationMs": 3057,
-      "recoveryMs": 310,
-      "completeAfterFaultMs": 29701,
+      "publishMs": 40262,
+      "faultStartedAfterMs": 8043,
+      "faultDurationMs": 2045,
+      "recoveryMs": 1305,
+      "completeAfterFaultMs": 30709,
       "actions": [
         "deleted t-mosquitto-0 (graceful)",
         "mosquitto ready again"
@@ -105,11 +105,11 @@
       "duplicateTrips": 0,
       "phantom": 0,
       "trips": 200,
-      "publishMs": 42515,
+      "publishMs": 42514,
       "faultStartedAfterMs": 8494,
-      "faultDurationMs": 4576,
-      "recoveryMs": 120,
-      "completeAfterFaultMs": 29976,
+      "faultDurationMs": 4567,
+      "recoveryMs": 110,
+      "completeAfterFaultMs": 29993,
       "actions": [
         "deleted t-postgres-0 (graceful)",
         "postgres ready again"
@@ -130,11 +130,11 @@
       "FleetPartitionsUnowned",
       "FleetIngestTargetDown"
     ],
-    "messagesStored": 180259,
-    "p95PublishToCommitSeconds": 1.4963753160207949,
-    "leaseAcquisitions": 87
+    "messagesStored": 182466,
+    "p95PublishToCommitSeconds": 1.6173395710914207,
+    "leaseAcquisitions": 129
   },
   "ok": true,
   "mode": "quick",
-  "wallClockS": 293
+  "wallClockS": 297
 }
