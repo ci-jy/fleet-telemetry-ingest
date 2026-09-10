@@ -676,6 +676,11 @@ polyline through all the positions the device reported.
   past the window, and those messages are then stored and flagged late. Nothing is lost or
   duplicated, but trips can differ from an uncompressed run. The in-process cluster test
   therefore uses a reorder window wider than its replay.
+- **One unexplained test timeout.** In one independent run, `test/cluster.integration.test.ts`
+  hung past its 120 s limit; it normally finishes in about 5 s. The likely cause was fixed: the
+  subscriber stopped reading packets once its ingestor was closed, which could stall a graceful
+  disconnect, and that disconnect now has a 2 s bound. The hang never reproduced locally, before or
+  after the fix (36 runs, some under parallel load).
 - **Fixed partition count.** Changing `PARTITIONS` re-maps devices to partitions. That needs a
   stop-the-world migration (drain, then restart every pod with the new count); there is no live
   re-partitioning.
