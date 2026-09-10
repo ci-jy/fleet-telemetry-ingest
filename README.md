@@ -10,7 +10,7 @@ the multi-pod test 13,463 messages survive a scale-up, two pod crashes and a sca
 | `test/cluster.integration.test.ts` (5 in-process pods, 8 partitions, [results/cluster-chaos.json](results/cluster-chaos.json)) | scale 1→3, kill + restart, kill without restart, graceful stop, scale 1→2 | 13,463 | 0 | 0 | trips identical to one uninterrupted ingestor; every handoff < 1 s |
 | `npm run test:chaos` (Docker Compose + Toxiproxy, [docs/RESILIENCE.md](docs/RESILIENCE.md)) | SIGKILL, SIGTERM, broker restart, DB restart, latency, DB partition × 5 seeds | ~7,000 per run | 0 | 0 | 30/30 runs pass, recovery ≤ 0.55 s |
 | `deploy/prometheus/rules.test.yaml` (promtool) | p95 latency, consumer lag, error ratio, unowned partitions, target down | – | – | – | every alert fires and stays quiet as specified |
-| `scripts/k8s-e2e.sh --quick` (k3d, 3 replicas, 200 devices) | pod kill every 4 s, scale 1→3→2, Mosquitto restart, Postgres restart | – | – | – | runs in CI (`.github/workflows/k8s.yml`); see [Limitations](#limitations) |
+| `scripts/k8s-e2e.sh --quick` (k3d, 3 replicas, 200 devices) | pod kill every 4 s, scale 1→3→2, Mosquitto restart, Postgres restart | – | – | – | wired into `.github/workflows/k8s.yml`; not yet run to completion, see [Limitations](#limitations) |
 
 Quickstart (Docker, k3d, Helm and kubectl installed):
 
