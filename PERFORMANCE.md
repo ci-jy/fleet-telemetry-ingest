@@ -2,7 +2,7 @@
 
 All numbers below come from real runs on a single machine on 2026-10-03:
 
-- 4 vCPUs (Intel i5-13600K), 8 GB RAM, Node.js v26.9.0
+- 4 vCPUs (Intel i5-13600K), 16 GB RAM, Node.js v26.9.0
 - Mosquitto 2 and Postgres 16 in Docker (host networking)
 - the ingestion service (`npm start`), the load generators and k6, all on the same host
 
