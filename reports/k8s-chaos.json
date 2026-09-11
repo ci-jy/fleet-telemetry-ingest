@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-05T00:39:58.020Z",
+  "generatedAt": "2026-10-05T00:51:04.933Z",
   "config": {
     "partitions": 16,
     "replicas": 3,
@@ -29,10 +29,10 @@
       "phantom": 0,
       "trips": 200,
       "publishMs": 42277,
-      "faultStartedAfterMs": 8448,
-      "faultDurationMs": 8064,
-      "recoveryMs": 63,
-      "completeAfterFaultMs": 26298,
+      "faultStartedAfterMs": 8446,
+      "faultDurationMs": 8067,
+      "recoveryMs": 1198,
+      "completeAfterFaultMs": 26275,
       "actions": [
         "killed t-ingest-1",
         "killed t-ingest-2",
@@ -55,14 +55,14 @@
       "phantom": 0,
       "trips": 200,
       "publishMs": 40963,
-      "faultStartedAfterMs": 8183,
-      "faultDurationMs": 14327,
-      "recoveryMs": 321,
-      "completeAfterFaultMs": 18475,
+      "faultStartedAfterMs": 8184,
+      "faultDurationMs": 14613,
+      "recoveryMs": 746,
+      "completeAfterFaultMs": 18693,
       "actions": [
-        "scaled to 1 (ready after 511 ms)",
-        "scaled to 3 (ready after 3526 ms)",
-        "scaled to 2 (ready after 516 ms)"
+        "scaled to 1 (ready after 525 ms)",
+        "scaled to 3 (ready after 3023 ms)",
+        "scaled to 2 (ready after 518 ms)"
       ],
       "errors": [],
       "examples": [],
@@ -80,11 +80,11 @@
       "duplicateTrips": 0,
       "phantom": 0,
       "trips": 200,
-      "publishMs": 40262,
-      "faultStartedAfterMs": 8043,
-      "faultDurationMs": 1523,
-      "recoveryMs": 1670,
-      "completeAfterFaultMs": 31229,
+      "publishMs": 40261,
+      "faultStartedAfterMs": 8044,
+      "faultDurationMs": 3053,
+      "recoveryMs": 305,
+      "completeAfterFaultMs": 29688,
       "actions": [
         "deleted t-mosquitto-0 (graceful)",
         "mosquitto ready again"
@@ -105,11 +105,11 @@
       "duplicateTrips": 0,
       "phantom": 0,
       "trips": 200,
-      "publishMs": 42513,
+      "publishMs": 42517,
       "faultStartedAfterMs": 8494,
-      "faultDurationMs": 3033,
-      "recoveryMs": 738,
-      "completeAfterFaultMs": 31509,
+      "faultDurationMs": 4561,
+      "recoveryMs": 46,
+      "completeAfterFaultMs": 29996,
       "actions": [
         "deleted t-postgres-0 (graceful)",
         "postgres ready again"
@@ -130,11 +130,11 @@
       "FleetPartitionsUnowned",
       "FleetIngestTargetDown"
     ],
-    "messagesStored": 174922,
-    "p95PublishToCommitSeconds": 0.3623160639365339,
-    "leaseAcquisitions": 81
+    "messagesStored": 176528,
+    "p95PublishToCommitSeconds": 1.56243958028745,
+    "leaseAcquisitions": 84
   },
   "ok": true,
   "mode": "quick",
-  "wallClockS": 290
+  "wallClockS": 295
 }
