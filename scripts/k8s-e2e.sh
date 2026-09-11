@@ -236,6 +236,9 @@ node -e '
   if (r.prometheus) console.log(`prometheus: ${r.prometheus.targetsUp}/${r.prometheus.ingestPods} ingest pods scraped, alert rules: ${(r.prometheus.alertRules || []).length}`);
 ' "${line#K8S_CHAOS_REPORT }" "$([[ $QUICK == 1 ]] && echo quick || echo full)" "$(( $(date +%s) - started ))" "$REPORT"
 
+# Keep the README results block and the figure in step with the report just written.
+if [[ $REPORT == reports/k8s-chaos.json ]]; then python3 scripts/sync-results.py || log "could not sync README results"; fi
+
 ok=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).ok)' "$REPORT")
 if [[ $status != succeeded || $ok != true ]]; then
   log "FAILED: job $status, report ok=$ok ($REPORT)"

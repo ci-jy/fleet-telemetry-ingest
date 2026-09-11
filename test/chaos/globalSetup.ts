@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { ChaosEnv } from "../../src/chaos/runner.js";
 import { loadAllResults, writeSummary } from "../../src/chaos/report.js";
 import { SCENARIOS } from "../../src/chaos/scenarios.js";
@@ -10,6 +11,9 @@ export default async function setup(): Promise<() => Promise<void>> {
   await env.up();
   return async () => {
     log(`results table: ${writeSummary(loadAllResults(), SCENARIOS.map((s) => s.name))}`);
+    // Copy the new table into docs/RESILIENCE.md and redraw the figure (best effort).
+    const sync = spawnSync("python3", ["scripts/sync-results.py"], { stdio: "inherit" });
+    if (sync.status !== 0) log("could not sync docs/RESILIENCE.md with the results");
     if (process.env.CHAOS_KEEP === "1") log("CHAOS_KEEP=1: leaving the environment running");
     else await env.down();
   };
