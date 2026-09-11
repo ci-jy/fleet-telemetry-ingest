@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-04T23:44:16.276Z",
+  "generatedAt": "2026-10-05T00:03:39.285Z",
   "config": {
     "partitions": 16,
     "replicas": 3,
@@ -30,9 +30,9 @@
       "trips": 200,
       "publishMs": 42276,
       "faultStartedAfterMs": 8446,
-      "faultDurationMs": 8071,
-      "recoveryMs": 1735,
-      "completeAfterFaultMs": 26284,
+      "faultDurationMs": 8064,
+      "recoveryMs": 1736,
+      "completeAfterFaultMs": 26285,
       "actions": [
         "killed t-ingest-1",
         "killed t-ingest-2",
@@ -56,13 +56,13 @@
       "trips": 200,
       "publishMs": 40964,
       "faultStartedAfterMs": 8184,
-      "faultDurationMs": 16101,
-      "recoveryMs": 8,
-      "completeAfterFaultMs": 16687,
+      "faultDurationMs": 15141,
+      "recoveryMs": 638,
+      "completeAfterFaultMs": 18165,
       "actions": [
-        "scaled to 1 (ready after 511 ms)",
-        "scaled to 3 (ready after 4561 ms)",
-        "scaled to 2 (ready after 507 ms)"
+        "scaled to 1 (ready after 518 ms)",
+        "scaled to 3 (ready after 3540 ms)",
+        "scaled to 2 (ready after 511 ms)"
       ],
       "errors": [],
       "examples": [],
@@ -82,9 +82,9 @@
       "trips": 200,
       "publishMs": 40262,
       "faultStartedAfterMs": 8043,
-      "faultDurationMs": 3044,
-      "recoveryMs": 275,
-      "completeAfterFaultMs": 29699,
+      "faultDurationMs": 3062,
+      "recoveryMs": 100,
+      "completeAfterFaultMs": 29681,
       "actions": [
         "deleted t-mosquitto-0 (graceful)",
         "mosquitto ready again"
@@ -106,10 +106,10 @@
       "phantom": 0,
       "trips": 200,
       "publishMs": 42516,
-      "faultStartedAfterMs": 8493,
-      "faultDurationMs": 4126,
-      "recoveryMs": 401,
-      "completeAfterFaultMs": 30435,
+      "faultStartedAfterMs": 8495,
+      "faultDurationMs": 4651,
+      "recoveryMs": 98,
+      "completeAfterFaultMs": 29899,
       "actions": [
         "deleted t-postgres-0 (graceful)",
         "postgres ready again"
@@ -130,11 +130,11 @@
       "FleetPartitionsUnowned",
       "FleetIngestTargetDown"
     ],
-    "messagesStored": 174473,
-    "p95PublishToCommitSeconds": 1.4196901679583118,
-    "leaseAcquisitions": 75
+    "messagesStored": 174574,
+    "p95PublishToCommitSeconds": 1.9901789138706727,
+    "leaseAcquisitions": 110
   },
   "ok": true,
   "mode": "quick",
-  "wallClockS": 295
+  "wallClockS": 288
 }

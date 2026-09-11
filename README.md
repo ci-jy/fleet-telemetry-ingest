@@ -276,18 +276,18 @@ scenario) and exits non-zero on any loss, duplicate or unscraped pod.
 `.github/workflows/k8s.yml` runs the same script after the static checks and uploads the report.
 
 Measured with `--quick` (3 replicas, 16 partitions, 200 vehicles, 1500 msg/s, seed 7; the whole
-script took 297 s including cluster creation, inside a 3 GB node limit):
+script took 288 s including cluster creation, inside a 3 GB node limit):
 
 | Scenario | Sent | Distinct | Stored | Lost | Duplicated | Recovery |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `pod-kill` (3 kills, 4 s apart) | 63,355 | 60,329 | 60,329 | 0 | 0 | 1.7 s |
-| `scale` 3 → 1 → 3 → 2 | 61,387 | 58,376 | 58,376 | 0 | 0 | 0.7 s |
-| `mosquitto-restart` | 60,335 | 57,478 | 57,478 | 0 | 0 | 1.3 s |
+| `scale` 3 → 1 → 3 → 2 | 61,387 | 58,376 | 58,376 | 0 | 0 | 0.6 s |
+| `mosquitto-restart` | 60,335 | 57,478 | 57,478 | 0 | 0 | 0.1 s |
 | `postgres-restart` | 63,713 | 60,626 | 60,626 | 0 | 0 | 0.1 s |
 | **total** | 248,790 | 236,809 | 236,809 | 0 | 0 | |
 
 "Sent" includes the simulator's deliberate duplicates. Prometheus had an `up` target for 3 of 3
-ingest pods with all 5 alert rules loaded, and reported a p95 publish-to-commit latency of 1.6 s
+ingest pods with all 5 alert rules loaded, and reported a p95 publish-to-commit latency of 2.0 s
 over the run (the chaos replay publishes faster than real time and pauses during faults).
 
 ## Message format
