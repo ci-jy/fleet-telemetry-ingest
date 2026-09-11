@@ -528,6 +528,7 @@ Rule and chart checks:
 promtool test rules deploy/prometheus/rules.test.yaml
 helm lint charts/telemetry -f charts/telemetry/values-ci.yaml
 helm template t charts/telemetry -f charts/telemetry/values-ci.yaml | kubeconform -strict -ignore-missing-schemas -summary
+bash scripts/check-grafana.sh   # loads the dashboard into Grafana 11.3 (Docker, port 23000)
 ```
 
 The accuracy sweep, `npm run accuracy -- --seeds 20 --devices 50`, runs many more seeded fleets.
