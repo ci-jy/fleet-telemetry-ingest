@@ -79,7 +79,7 @@ Definitions used in the results:
 
 ## Results
 
-Measured on 2026-10-03 with `npm run test:chaos` (seeds 1–5) on one machine: 4 vCPUs, Node.js
+Measured on 2026-10-04 with `npm run test:chaos` (seeds 1–5) on one machine: 4 vCPUs, Node.js
 v26.9.0 for the driver and Node.js 22 in the service image. Raw results are in
 `results/chaos/<scenario>.json`. The table is `results/chaos/summary.md`, which the suite
 regenerates on every run.
@@ -89,65 +89,63 @@ the fault-free run, together with their idle segments and late flags.**
 
 | Scenario | Runs | Passed | Lost | Duplicate rows | Trips identical | Median recovery s | Max recovery s | Median catch-up s | Max peak queue |
 | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |
-| sigkill-ingest | 5 | 5 | 0 | 0 | all | 0.29 | 0.31 | 0.45 | 2000 |
-| sigterm-ingest | 5 | 5 | 0 | 0 | all | 0.29 | 0.31 | 0.34 | 2000 |
-| mosquitto-restart | 5 | 5 | 0 | 0 | all | 0.41 | 0.42 | 0.41 | 1350 |
-| postgres-restart | 5 | 5 | 0 | 0 | all | 0.17 | 0.17 | 0.61 | 2000 |
-| network-latency | 5 | 5 | 0 | 0 | all | 0.06 | 0.09 | 0.24 | 2000 |
-| db-partition | 5 | 5 | 0 | 0 | all | 0.51 | 0.54 | 0.69 | 2032 |
+| sigkill-ingest | 5 | 5 | 0 | 0 | all | 0.36 | 0.52 | 0.56 | 2000 |
+| sigterm-ingest | 5 | 5 | 0 | 0 | all | 0.42 | 0.50 | 0.51 | 2000 |
+| mosquitto-restart | 5 | 5 | 0 | 0 | all | 0.39 | 0.41 | 0.39 | 1377 |
+| postgres-restart | 5 | 5 | 0 | 0 | all | 0.16 | 0.19 | 0.60 | 2000 |
+| network-latency | 5 | 5 | 0 | 0 | all | 0.04 | 0.07 | 0.25 | 2000 |
+| db-partition | 5 | 5 | 0 | 0 | all | 0.49 | 0.52 | 0.77 | 2033 |
 
 | Scenario | Seed | Messages delivered | Unique | Lost | Duplicate rows | Trips (match fault-free) | Downtime s | Recovery s | Catch-up s | Peak queue | Paused | Failed batches | Result |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: | --- | ---: | --- |
-| sigkill-ingest | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 2.31 | 0.29 | 0.45 | 2000 / 2000 | yes | 0 | pass |
-| sigkill-ingest | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 2.23 | 0.31 | 0.46 | 2000 / 2000 | yes | 0 | pass |
-| sigkill-ingest | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 2.17 | 0.29 | 0.40 | 2000 / 2000 | yes | 0 | pass |
-| sigkill-ingest | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 2.29 | 0.28 | 0.38 | 2000 / 2000 | yes | 0 | pass |
-| sigkill-ingest | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 2.25 | 0.26 | 0.46 | 2000 / 2000 | yes | 0 | pass |
-| sigterm-ingest | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 1.40 | 0.29 | 0.34 | 2000 / 2000 | yes | 0 | pass |
-| sigterm-ingest | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 1.38 | 0.29 | 0.34 | 2000 / 2000 | yes | 0 | pass |
-| sigterm-ingest | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 1.38 | 0.27 | 0.32 | 1392 / 2000 | no | 0 | pass |
-| sigterm-ingest | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 1.35 | 0.31 | 0.36 | 2000 / 2000 | yes | 0 | pass |
-| sigterm-ingest | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 1.38 | 0.31 | 0.36 | 2000 / 2000 | yes | 0 | pass |
-| mosquitto-restart | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 0.59 | 0.42 | 0.42 | 1327 / 2000 | no | 0 | pass |
-| mosquitto-restart | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 0.66 | 0.42 | 0.42 | 1345 / 2000 | no | 0 | pass |
-| mosquitto-restart | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 0.65 | 0.40 | 0.40 | 729 / 2000 | no | 0 | pass |
-| mosquitto-restart | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 0.67 | 0.41 | 0.41 | 1350 / 2000 | no | 0 | pass |
-| mosquitto-restart | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 0.64 | 0.39 | 0.39 | 1337 / 2000 | no | 0 | pass |
-| postgres-restart | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 1.59 | 0.17 | 1.80 | 2000 / 2000 | yes | 4 | pass |
-| postgres-restart | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 1.20 | 0.14 | 0.55 | 2000 / 2000 | yes | 3 | pass |
-| postgres-restart | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 1.12 | 0.17 | 0.63 | 2000 / 2000 | yes | 3 | pass |
+| sigkill-ingest | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 2.25 | 0.41 | 0.56 | 2000 / 2000 | yes | 0 | pass |
+| sigkill-ingest | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 2.24 | 0.34 | 0.49 | 2000 / 2000 | yes | 0 | pass |
+| sigkill-ingest | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 2.17 | 0.52 | 0.67 | 2000 / 2000 | yes | 0 | pass |
+| sigkill-ingest | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 2.23 | 0.34 | 0.49 | 2000 / 2000 | yes | 0 | pass |
+| sigkill-ingest | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 2.25 | 0.36 | 0.56 | 2000 / 2000 | yes | 0 | pass |
+| sigterm-ingest | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 1.41 | 0.37 | 0.42 | 2000 / 2000 | yes | 0 | pass |
+| sigterm-ingest | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 1.37 | 0.46 | 0.51 | 2000 / 2000 | yes | 0 | pass |
+| sigterm-ingest | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 1.35 | 0.42 | 0.52 | 2000 / 2000 | yes | 0 | pass |
+| sigterm-ingest | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 1.35 | 0.50 | 0.55 | 1618 / 2000 | no | 0 | pass |
+| sigterm-ingest | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 1.42 | 0.42 | 0.47 | 2000 / 2000 | yes | 0 | pass |
+| mosquitto-restart | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 0.70 | 0.38 | 0.38 | 1377 / 2000 | no | 0 | pass |
+| mosquitto-restart | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 0.68 | 0.39 | 0.39 | 996 / 2000 | no | 0 | pass |
+| mosquitto-restart | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 0.65 | 0.41 | 0.41 | 1356 / 2000 | no | 0 | pass |
+| mosquitto-restart | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 0.69 | 0.37 | 0.37 | 1367 / 2000 | no | 0 | pass |
+| mosquitto-restart | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 0.69 | 0.39 | 0.39 | 1355 / 2000 | no | 0 | pass |
+| postgres-restart | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 2.18 | 0.19 | 1.27 | 2000 / 2000 | yes | 4 | pass |
+| postgres-restart | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 1.17 | 0.15 | 0.60 | 2000 / 2000 | yes | 3 | pass |
+| postgres-restart | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 1.18 | 0.16 | 0.57 | 2000 / 2000 | yes | 3 | pass |
 | postgres-restart | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 1.16 | 0.17 | 0.58 | 2000 / 2000 | yes | 3 | pass |
-| postgres-restart | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 1.12 | 0.16 | 0.61 | 2000 / 2000 | yes | 3 | pass |
-| network-latency | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 5.02 | 0.09 | 0.24 | 2000 / 2000 | yes | 0 | pass |
-| network-latency | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 5.01 | 0.08 | 0.23 | 2000 / 2000 | yes | 0 | pass |
-| network-latency | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 5.00 | 0.04 | 0.24 | 2000 / 2000 | yes | 0 | pass |
-| network-latency | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 5.01 | 0.06 | 0.32 | 2000 / 2000 | yes | 0 | pass |
-| network-latency | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 5.00 | 0.04 | 0.20 | 2000 / 2000 | yes | 0 | pass |
-| db-partition | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 6.02 | 0.53 | 0.74 | 2027 / 2000 | yes | 2 | pass |
-| db-partition | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 6.01 | 0.48 | 0.68 | 2032 / 2000 | yes | 2 | pass |
-| db-partition | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 6.01 | 0.54 | 0.75 | 2030 / 2000 | yes | 2 | pass |
-| db-partition | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 6.01 | 0.51 | – | 2031 / 2000 | yes | 2 | pass |
-| db-partition | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 6.01 | 0.48 | 0.69 | 2030 / 2000 | yes | 2 | pass |
-
-"–" means the catch-up point was not captured by the 50 ms sampler in that run.
+| postgres-restart | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 1.11 | 0.14 | 0.60 | 2000 / 2000 | yes | 3 | pass |
+| network-latency | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 5.01 | 0.04 | 0.30 | 2000 / 2000 | yes | 0 | pass |
+| network-latency | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 5.01 | 0.04 | 0.24 | 2000 / 2000 | yes | 0 | pass |
+| network-latency | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 5.01 | 0.03 | 0.29 | 2000 / 2000 | yes | 0 | pass |
+| network-latency | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 5.01 | 0.04 | 0.25 | 2000 / 2000 | yes | 0 | pass |
+| network-latency | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 5.01 | 0.07 | 0.22 | 2000 / 2000 | yes | 0 | pass |
+| db-partition | 1 | 7338 | 7007 | 0 | 0 | 24 (yes) | 6.02 | 0.49 | 0.75 | 2020 / 2000 | yes | 2 | pass |
+| db-partition | 2 | 7128 | 6774 | 0 | 0 | 24 (yes) | 6.01 | 0.48 | 0.78 | 2031 / 2000 | yes | 2 | pass |
+| db-partition | 3 | 7284 | 6941 | 0 | 0 | 24 (yes) | 6.01 | 0.52 | 0.77 | 2029 / 2000 | yes | 2 | pass |
+| db-partition | 4 | 7440 | 7103 | 0 | 0 | 24 (yes) | 6.01 | 0.49 | 0.75 | 2030 / 2000 | yes | 2 | pass |
+| db-partition | 5 | 6313 | 5999 | 0 | 0 | 24 (yes) | 6.01 | 0.50 | 0.77 | 2033 / 2000 | yes | 2 | pass |
 
 ## Reading the results
 
-- **SIGKILL.** At the kill, 8–33 messages were queued in memory and a batch was usually in flight.
+- **SIGKILL.** At the kill, 6–22 messages were queued in memory and a batch was usually in flight.
   None of them had been acknowledged, so the broker redelivered them to the restarted service.
-  About 240–280 redelivered or simulator-duplicated copies per run were discarded by the primary
+  About 250–290 redelivered or simulator-duplicated copies per run were discarded by the primary
   key. The restarted service rebuilt every reorder buffer from the stored points and the persisted
   cursor, so stragglers that arrived after the restart were slotted in exactly as in the
-  fault-free run. Recovery (0.26–0.31 s after `docker start` returned) is the time the service
+  fault-free run. Recovery (0.34–0.52 s after `docker start` returned) is the time the service
   needed to start: connect, migrate, replay devices and subscribe. The backlog then fills the
   2,000-message queue and the consumer pauses until it drains.
 - **SIGTERM.** Every graceful stop exited with status 0 after committing and acknowledging its
   queue. The reorder buffers are deliberately not flushed on shutdown, so the result is the same
   as never stopping.
-- **Mosquitto restart.** The broker was unavailable for about 0.6 s. Its persistence file kept the
+- **Mosquitto restart.** The broker was unavailable for about 0.65–0.7 s. Its persistence file kept the
   service's session and queued messages. The publisher resent its unacknowledged publishes, and
   the service reconnected with backoff and resumed its session. No batch failed.
-- **PostgreSQL restart.** The database refused connections for 1.1–1.6 s. The service saw 3–4
+- **PostgreSQL restart.** The database refused connections for 1.1–2.2 s. The service saw 3–4
   failed batches, rebuilt the 8 affected devices from the database before each retry, and kept
   the retry backoff while new messages arrived. An earlier version of the suite caught two bugs
   here. First, an error emitted by a checked-out pg client during the shutdown crashed the
@@ -157,7 +155,7 @@ the fault-free run, together with their idle segments and late flags.**
   to fill the queue. The consumer paused and resumed, and nothing failed.
 - **Database partition.** With bytes silently dropped for 6 s, queries hit the 2 s timeout and
   hung connections were destroyed. Recovery after the heal (about 0.5 s) is dominated by the retry
-  backoff, which had grown to 2 s. The queue peaks slightly above its bound (2,027–2,032) because
+  backoff, which had grown to 2 s. The queue peaks slightly above its bound (2,020–2,033) because
   MQTT messages already parsed from the current TCP read are still handed over after the pause
   begins.
 
