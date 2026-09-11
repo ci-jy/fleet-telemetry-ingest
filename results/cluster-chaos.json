@@ -15,23 +15,23 @@
   "events": [
     {
       "step": "scale 1->3 rebalanced",
-      "ms": 313
+      "ms": 334
     },
     {
       "step": "pod kill + restart: all partitions owned",
-      "ms": 681
+      "ms": 537
     },
     {
       "step": "pod kill, no restart: leases expired and taken over",
-      "ms": 1
+      "ms": 0
     },
     {
       "step": "graceful stop: partitions handed over",
-      "ms": 769
+      "ms": 755
     },
     {
       "step": "scale 1->2 rebalanced",
-      "ms": 307
+      "ms": 324
     }
   ],
   "pods": [
@@ -54,10 +54,10 @@
       "members": 3,
       "unowned": 0,
       "maxUnownedSeconds": 0,
-      "acquisitions": 2,
+      "acquisitions": 3,
       "releases": 0,
       "losses": 0,
-      "devicesRebuilt": 5,
+      "devicesRebuilt": 9,
       "tickErrors": 0,
       "fenced": 0
     },
@@ -67,10 +67,10 @@
       "members": 3,
       "unowned": 0,
       "maxUnownedSeconds": 0,
-      "acquisitions": 4,
-      "releases": 1,
+      "acquisitions": 3,
+      "releases": 0,
       "losses": 0,
-      "devicesRebuilt": 12,
+      "devicesRebuilt": 8,
       "tickErrors": 0,
       "fenced": 0
     },
