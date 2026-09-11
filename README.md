@@ -65,7 +65,7 @@ Measured numbers are in [PERFORMANCE.md](PERFORMANCE.md) (throughput, latency, a
 
 | Check (committed test or script) | Faults | Messages (distinct) | Lost | Duplicated | Result |
 | --- | --- | ---: | ---: | ---: | --- |
-| `scripts/k8s-e2e.sh --quick` (k3d, 3 replicas, 16 partitions, 200 devices, [reports/k8s-chaos.json](reports/k8s-chaos.json)) | pod kill every 4 s, scale 3→1→3→2, Mosquitto restart, Postgres restart | 236,809 | 0 | 0 | recovery 0.1–1.7 s per scenario; Prometheus scraped 3/3 pods |
+| `scripts/k8s-e2e.sh --quick` (k3d, 3 replicas, 16 partitions, 200 devices, [reports/k8s-chaos.json](reports/k8s-chaos.json)) | pod kill every 4 s, scale 3→1→3→2, Mosquitto restart, Postgres restart | 236,809 | 0 | 0 | recovery 0.03–2.4 s per scenario; Prometheus scraped 3/3 pods |
 | `test/cluster.integration.test.ts` (5 in-process pods, 8 partitions, [results/cluster-chaos.json](results/cluster-chaos.json)) | scale 1→3, kill + restart, kill without restart, graceful stop, scale 1→2 | 13,463 | 0 | 0 | trips identical to one uninterrupted ingestor; every handoff < 1 s |
 | `npm run test:chaos` (Docker Compose + Toxiproxy, [docs/RESILIENCE.md](docs/RESILIENCE.md)) | SIGKILL, SIGTERM, broker restart, DB restart, latency, DB partition × 5 seeds | ~7,000 per run | 0 | 0 | 30/30 runs pass, trips identical to a fault-free run |
 | `deploy/prometheus/rules.test.yaml` (promtool) | p95 latency, consumer lag, error ratio, unowned partitions, target down | – | – | – | every alert fires and stays quiet as specified |
@@ -276,18 +276,19 @@ scenario) and exits non-zero on any loss, duplicate or unscraped pod.
 `.github/workflows/k8s.yml` runs the same script after the static checks and uploads the report.
 
 Measured with `--quick` (3 replicas, 16 partitions, 200 vehicles, 1500 msg/s, seed 7; the whole
-script took 288 s including cluster creation, inside a 3 GB node limit):
+script took 286 s including cluster creation, inside a 3 GB node limit):
 
 | Scenario | Sent | Distinct | Stored | Lost | Duplicated | Recovery |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `pod-kill` (3 kills, 4 s apart) | 63,355 | 60,329 | 60,329 | 0 | 0 | 1.7 s |
-| `scale` 3 → 1 → 3 → 2 | 61,387 | 58,376 | 58,376 | 0 | 0 | 0.6 s |
-| `mosquitto-restart` | 60,335 | 57,478 | 57,478 | 0 | 0 | 0.1 s |
-| `postgres-restart` | 63,713 | 60,626 | 60,626 | 0 | 0 | 0.1 s |
+| `pod-kill` (3 kills, 4 s apart) | 63,355 | 60,329 | 60,329 | 0 | 0 | 1.3 s |
+| `scale` 3 → 1 → 3 → 2 | 61,387 | 58,376 | 58,376 | 0 | 0 | 2.4 s |
+| `mosquitto-restart` | 60,335 | 57,478 | 57,478 | 0 | 0 | 1.3 s |
+| `postgres-restart` | 63,713 | 60,626 | 60,626 | 0 | 0 | 0.03 s |
 | **total** | 248,790 | 236,809 | 236,809 | 0 | 0 | |
 
-"Sent" includes the simulator's deliberate duplicates. Prometheus had an `up` target for 3 of 3
-ingest pods with all 5 alert rules loaded, and reported a p95 publish-to-commit latency of 2.0 s
+The message counts are fixed by the seed; recovery times vary from run to run (another run of
+the same command measured 0.1–1.7 s). "Sent" includes the simulator's deliberate duplicates. Prometheus had an `up` target for 3 of 3
+ingest pods with all 5 alert rules loaded, and reported a p95 publish-to-commit latency of 1.6 s
 over the run (the chaos replay publishes faster than real time and pauses during faults).
 
 ## Message format
