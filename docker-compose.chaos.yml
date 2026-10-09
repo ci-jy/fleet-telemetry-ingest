@@ -39,7 +39,6 @@ services:
   ingest:
     build:
       context: .
-      network: host
     image: fleet-telemetry-ingest:chaos
     network_mode: host
     depends_on:
